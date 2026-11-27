@@ -1,0 +1,89 @@
+name: Synchronize and deploy Development HQ
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '7,17,27,37,47,57 * * * *'
+
+concurrency:
+  group: mythwrought-hq-pages
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  collect:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    outputs:
+      publish: ${{ steps.sync.outputs.publish }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Restore last verified collector state
+        uses: actions/cache/restore@v4
+        with:
+          path: .local
+          key: hq-sync-v1-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: hq-sync-v1-
+      - name: Validate and synchronize public sources
+        id: sync
+        run: node scripts/sync.mjs
+        env:
+          HQ_GITHUB_TOKEN: ${{ github.token }}
+          HQ_FORCE_PUBLISH: ${{ github.event_name == 'workflow_dispatch' }}
+      - name: Build Pages artifact
+        if: steps.sync.outputs.publish == 'true'
+        run: node scripts/build.mjs
+      - name: Upload Pages artifact
+        if: steps.sync.outputs.publish == 'true'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+      - name: Upload sanitized collector state
+        uses: actions/upload-artifact@v4
+        with:
+          name: hq-sync-state
+          path: .local/
+          include-hidden-files: true
+          retention-days: 1
+
+  deploy:
+    needs: collect
+    if: needs.collect.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy Development HQ only
+        id: deployment
+        uses: actions/deploy-pages@v4
+
+  preserve:
+    needs: [collect, deploy]
+    if: always() && needs.collect.result == 'success'
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: hq-sync-state
+          path: .local
+      - name: Mark successful publication
+        if: needs.deploy.result == 'success'
+        run: mv .local/pending.json .local/published.json
+      - name: Preserve collector state
+        uses: actions/cache/save@v4
+        with:
+          path: .local
+          key: hq-sync-v1-${{ github.run_id }}-${{ github.run_attempt }}

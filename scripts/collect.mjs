@@ -1,5 +1,5 @@
 import { dependencies, directives, game, git, hq, productionURL, registry } from '../config/sources.mjs';
-import { SNAPSHOT_VERSION, isISO, isSha, isSnapshot, sourceLink } from '../src/model.mjs';
+import { SNAPSHOT_VERSION, WORKFLOW_STATES, isISO, isSha, isSnapshot, sourceLink } from '../src/model.mjs';
 import { createGitHub } from './github.mjs';
 import { appendReports, parseReport, publicText, reportKey } from './report.mjs';
 
@@ -99,7 +99,7 @@ export async function collect({ previous, state, token, fetcher = fetch, now = n
     }
   }
 
-  const [head, pulls, issues, workflows, releases, deployments, production, activeDirectives] = await Promise.all([
+  const [head, pulls, issues, workflows, releases, deployments, production, activeWorkflowLoad, activeDirectives] = await Promise.all([
     preserve('branches', previous?.mainHead ?? null, async () => {
       const ref = await request(gamePath('/git/ref/heads/main'), 'main');
       if (ref.unchanged && previous.mainHead) return previous.mainHead;
@@ -147,6 +147,20 @@ export async function collect({ previous, state, token, fetcher = fetch, now = n
       if (html.length > 1_000_000) throw new Error('Public game response is larger than expected');
       return { version: publicVersion(html), observedAt: attemptedAt, source: productionURL };
     }),
+    Promise.all(WORKFLOW_STATES.map(async status => [
+      status,
+      await preserve('workflowLoad:' + status, previous?.workflowLoad?.[status] ?? null, async () => {
+        const result = await detail(gamePath(`/actions/runs?status=${status}&per_page=50`));
+        if (!Number.isSafeInteger(result?.total_count) || result.total_count < 0 || !Array.isArray(result.workflow_runs)) {
+          throw new Error('Workflow count unavailable');
+        }
+        const runs = unique(result.workflow_runs.filter(item => item?.status === status).map(run), 'id');
+        if (runs.length > result.total_count) throw new Error('Workflow count was inconsistent');
+        if (runs.length < result.total_count) mark('workflowLoad:' + status, 'partial',
+          `GitHub reported ${result.total_count} runs and returned ${runs.length} matching details. HQ requests up to 50 details.`);
+        return { total: result.total_count, observedAt: attemptedAt, runs };
+      }),
+    ])).then(Object.fromEntries),
     preserve('directives', previous?.directives ?? [], async () => {
       return await Promise.all(directives.map(async row => {
         const key = `directive-${row.number}`;
@@ -251,7 +265,7 @@ export async function collect({ previous, state, token, fetcher = fetch, now = n
   health.lastSuccess = collectionSucceeded ? attemptedAt : previous?.health.lastSuccess ?? null;
   health.rateLimit = client.rate;
   const snapshot = { schemaVersion: SNAPSHOT_VERSION, generatedAt: attemptedAt, health,
-    mainHead: head, developers, pulls, issues, workflows, checks, releases, deployments, production,
+    mainHead: head, developers, pulls, issues, workflows, workflowLoad: activeWorkflowLoad, checks, releases, deployments, production,
     reports, directives: activeDirectives, dependencies };
   if (!isSnapshot(snapshot)) throw new Error('Collector produced an invalid snapshot');
   return { snapshot, state: { tags: client.tags, reportsSince }, collectionSucceeded, canPublish: Boolean(health.lastSuccess) };

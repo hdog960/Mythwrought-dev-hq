@@ -1,4 +1,4 @@
-import { APPROVAL_TYPES, BLOCKER_TYPES, CATEGORIES, OUTCOMES, READINESS, REPO, isISO, isId,
+import { APPROVAL_TYPES, BLOCKER_TYPES, CATEGORIES, EXECUTION_STATES, OUTCOMES, READINESS, REPO, isISO, isId,
   isRecord, isSha, sourceLink } from '../src/model.mjs';
 
 const MAX_REPORT_BYTES = 16_384;
@@ -57,6 +57,14 @@ const quantity = value => contract(value, {
   amount: count, target: optional(count),
 });
 
+const milestone = value => contract(value, {
+  id: isId, label: text => requiredText(text, 160), effort: value => duration(value) && value >= .1,
+  kind: oneOf(['development', 'qualification']), complete: value => typeof value === 'boolean',
+});
+const roadmap = value => contract(value, {
+  revision: isId, milestones: list(milestone, 60),
+}) && value.milestones.length > 0 && new Set(value.milestones.map(item => item.id)).size === value.milestones.length;
+
 export const fields = {
   schemaVersion: value => value === 1, publish: value => value === true, reportId: isId,
   developerId: isId, assignmentId: isId, category: oneOf(CATEGORIES), sessionId: isId, reportedAt: isISO,
@@ -64,8 +72,11 @@ export const fields = {
   branch: value => typeof value === 'string' && /^[A-Za-z0-9][-.\w/]{0,159}$/.test(value) && !value.includes('..'),
   commit: isSha, pull: optional(value => count(value) && value > 0), issue: optional(value => count(value) && value > 0),
   checkpoint: optional(link),
+  execution: optional(value => contract(value, {
+    state: oneOf(EXECUTION_STATES), observedAt: isISO, evidence: link,
+  })),
   outcome: oneOf(OUTCOMES), completed: optional(list(value => requiredText(value, 400), 20)),
-  milestone: optional(isId), newlyCompleted: optional(list(isId)), quantitative: optional(list(quantity)),
+  milestone: optional(isId), roadmapRevision: optional(isId), roadmap: optional(roadmap), newlyCompleted: optional(list(isId)), quantitative: optional(list(quantity)),
   remaining: optional(list(value => requiredText(value, 400), 20)), estimate: optional(estimate),
   blockers: optional(list(blocker)), dependencyIds: optional(list(isId)),
   qualification: optional(list(evidence)), reusableEvidence: optional(list(evidence)),
@@ -84,6 +95,8 @@ export function parseReport(body, assignment, registeredSource, comment) {
       payload.category !== assignment.category || payload.repository.toLowerCase() !== assignment.repository.toLowerCase() ||
       (assignment.pr !== null && payload.pull !== assignment.pr) || (assignment.branch && payload.branch !== assignment.branch) ||
       !isISO(comment.createdAt) || Date.parse(payload.reportedAt) > Date.parse(comment.createdAt) + 5 * 60_000) return null;
+  if (payload.execution && Date.parse(payload.execution.observedAt) > Date.parse(payload.reportedAt)) return null;
+  if (payload.roadmap && payload.roadmapRevision && payload.roadmap.revision !== payload.roadmapRevision) return null;
   if ((payload.decisions ?? []).some(item => item.state !== 'requested' &&
       !registeredSource.creatorAuthorizationPublishers?.includes(comment.publisher))) return null;
   const source = sourceLink(comment.url);

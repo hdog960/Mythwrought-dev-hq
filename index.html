@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#0d0b14">
+  <meta name="description" content="Mythwrought development reporting, creator decisions, and production evidence.">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <title>Mythwrought Development HQ</title>
+  <link rel="manifest" href="./manifest.webmanifest">
+  <link rel="icon" href="./assets/icon-192.png">
+  <link rel="apple-touch-icon" href="./assets/apple-touch.png">
+  <link rel="stylesheet" href="./styles.css">
+  <script type="module" src="./app.mjs"></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <div class="app-shell">
+    <aside class="rail">
+      <a class="brand" href="#home">
+        <img width="42" height="42" src="./assets/icon-192.png" alt="">
+        <span><strong>Mythwrought</strong><small>Development HQ</small></span>
+      </a>
+      <nav id="navigation" aria-label="Main navigation"></nav>
+      <a class="repository-link" href="https://github.com/hdog960/Mythwrought-dev-hq" target="_blank" rel="noopener noreferrer">HQ repository</a>
+    </aside>
+    <div class="workspace">
+      <header class="topbar">
+        <span class="current-view" id="current-view">Home</span>
+        <div class="topbar-actions">
+          <span class="health-pill" id="health" role="status">Loading snapshot</span>
+          <button class="icon-button" id="refresh" type="button" aria-label="Refresh snapshot" title="Refresh snapshot"></button>
+        </div>
+      </header>
+      <div class="notice" id="notice" role="status" hidden></div>
+      <main id="main" tabindex="-1"><p>Loading published development evidence…</p></main>
+    </div>
+  </div>
+  <div class="toast" id="toast" role="status" hidden></div>
+  <noscript>Enable JavaScript to open the dashboard.</noscript>
+</body>
+</html>

@@ -4,6 +4,8 @@ export const REPO = /^[-\w]+\/[-.\w]+$/;
 export const ID = /^[-a-z0-9]{1,100}$/;
 export const OUTCOMES = ['development', 'qualification', 'administration', 'waiting', 'blocked', 'failed'];
 export const CATEGORIES = ['manual', 'automatic', 'codex'];
+export const EXECUTION_STATES = ['queued', 'running', 'waiting', 'blocked', 'complete'];
+export const WORKFLOW_STATES = ['queued', 'in_progress', 'waiting'];
 export const BLOCKER_TYPES = ['creator approval', 'dependency', 'required CI failure', 'CI waiting', 'merge conflict',
   'access', 'missing source', 'technical defect', 'physical iPhone', 'architecture', 'reporting', 'deferral'];
 export const APPROVAL_TYPES = ['merge', 'deployment', 'physical iPhone', 'roadmap', 'reassignment',
@@ -43,17 +45,33 @@ export function isSnapshot(data) {
   return nullable(data.mainHead, isSha) && nullable(data.health.lastAttempt, isISO) &&
     nullable(data.health.lastSuccess, isISO) && nullable(data.health.nextExpected, isISO) &&
     data.developers.every(item => isId(item.id) && isId(item.assignmentId) && nullable(item.head, isSha) &&
+      nullable(item.scheduleEnabled, value => typeof value === 'boolean') &&
+      nullable(item.scheduleObservedAt, isISO) && nullable(item.scheduleStartsAt, isISO) &&
+      nullable(item.lastSchedulerResult, value => isRecord(value) && isISO(value.completedAt) && isISO(value.observedAt) &&
+        typeof value.needsCreatorAction === 'boolean' && nullable(value.publicOutput, sourceLink)) &&
       Array.isArray(item.registeredSources) && item.registeredSources.every(text) &&
       CATEGORIES.includes(item.category) && text(item.name) && text(item.project) && text(item.authority) && text(item.status)) &&
     data.reports.every(item => isId(item.reportId) && isId(item.assignmentId) &&
       isISO(item.reportedAt) && isSha(item.commit) && OUTCOMES.includes(item.outcome) &&
       nullable(item.completed, value => Array.isArray(value) && value.every(text)) &&
       nullable(item.remaining, value => Array.isArray(value) && value.every(text)) &&
+      nullable(item.roadmap, value => isRecord(value) && isId(value.revision) && records(value.milestones) &&
+        value.milestones.every(milestone => isId(milestone.id) && text(milestone.label) &&
+          typeof milestone.effort === 'number' && Number.isFinite(milestone.effort) && milestone.effort > 0 &&
+          ['development', 'qualification'].includes(milestone.kind) && typeof milestone.complete === 'boolean')) &&
+      nullable(item.execution, value => isRecord(value) && EXECUTION_STATES.includes(value.state) &&
+        isISO(value.observedAt) && sourceLink(value.evidence)) &&
       nullable(item.newlyCompleted, value => Array.isArray(value) && value.every(isId)) &&
       ['blockers', 'decisions', 'quantitative', 'qualification', 'reusableEvidence'].every(key => nullable(item[key], records))) &&
     data.pulls.every(item => positive(item.number) && isSha(item.head) && text(item.title)) &&
     data.issues.every(item => positive(item.number) && text(item.title)) &&
     data.workflows.every(item => positive(item.id) && isSha(item.head) && text(item.title)) &&
+    nullable(data.workflowLoad, value => isRecord(value) && WORKFLOW_STATES.every(status => {
+      const bucket = value[status];
+      return bucket === null || (isRecord(bucket) && Number.isSafeInteger(bucket.total) && bucket.total >= 0 &&
+        isISO(bucket.observedAt) && records(bucket.runs) && bucket.runs.length <= bucket.total &&
+        bucket.runs.every(item => positive(item.id) && isSha(item.head) && text(item.title) && item.status === status));
+    })) &&
     data.checks.every(item => positive(item.id) && isSha(item.head) && text(item.title)) &&
     data.deployments.every(item => positive(item.id) && isSha(item.head)) &&
     data.releases.every(item => positive(item.id) && text(item.name)) &&

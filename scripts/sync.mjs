@@ -33,10 +33,12 @@ console.log(JSON.stringify({ pulled: snapshot.pulls.length, issues: snapshot.iss
   production: snapshot.production.version, publish, sources: snapshot.health.sources }, null, 2));
 
 function contentFingerprint(snapshot) {
-  const { generatedAt, health, production, ...content } = snapshot;
+  const { generatedAt, health, production, workflowLoad, ...content } = snapshot;
   const { observedAt, ...productionIdentity } = production;
   const statuses = Object.entries(health.sources).sort(([a], [b]) => a.localeCompare(b)).map(([key, item]) => [key, item.state, item.note]);
-  return createHash('sha256').update(JSON.stringify({ ...content, production: productionIdentity, statuses })).digest('hex');
+  const workload = Object.fromEntries(Object.entries(workflowLoad ?? {}).map(([status, bucket]) =>
+    [status, bucket && { total: bucket.total, runs: bucket.runs }]));
+  return createHash('sha256').update(JSON.stringify({ ...content, production: productionIdentity, workload, statuses })).digest('hex');
 }
 
 async function publishedSnapshot() {

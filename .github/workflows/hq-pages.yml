@@ -2,6 +2,8 @@ name: Synchronize and deploy Development HQ
 
 on:
   workflow_dispatch:
+  issue_comment:
+    types: [created]
   schedule:
     - cron: '7,17,27,37,47,57 * * * *'
 
@@ -14,7 +16,12 @@ permissions:
 
 jobs:
   collect:
-    if: github.ref == 'refs/heads/main'
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      (github.event_name != 'issue_comment' ||
+      (github.event.issue.number == 1 &&
+      github.event.comment.user.id == github.event.repository.owner.id &&
+      contains(github.event.comment.body, '<!-- mythwrought-hq-report:v1 -->')))
     runs-on: ubuntu-latest
     timeout-minutes: 8
     outputs:

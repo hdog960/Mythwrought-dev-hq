@@ -5,6 +5,7 @@ import { createGitHub } from '../scripts/github.mjs';
 import { appendReports, parseReport } from '../scripts/report.mjs';
 import { approvalQueue, cyclesIn, estimateFor, freshState, isSnapshot, latestFor, sourceLink } from '../src/model.mjs';
 import { registry } from '../config/sources.mjs';
+import { accountOf, continuationFor, conversationURL, developerWork, nextScheduledRun, scopedDevelopers, workflowBuckets } from '../src/operations.mjs';
 
 const developer = registry[0];
 const instant = '2026-11-27T18:00:00Z';
@@ -121,7 +122,14 @@ test('Collector verifies report and pull HEAD, deduplicates, and preserves prior
       { id: 1, head_sha: current, name: 'Exact check', conclusion: 'success' },
       { id: 2, head_sha: old, name: 'Other ref', conclusion: 'failure' },
     ] });
-    if (path.endsWith('/actions/runs')) return Response.json({ workflow_runs: [] });
+    if (path.endsWith('/actions/runs')) {
+      const filter = new URL(href).searchParams.get('status');
+      if (filter === 'queued') return Response.json({ total_count: 7, workflow_runs: [
+        { id: 42, name: 'Exact workflow', head_sha: current, head_branch: developer.branch, status: 'queued' },
+      ] });
+      if (filter === 'waiting') return new Response(null, { status: 404 });
+      return Response.json({ total_count: 0, workflow_runs: [] });
+    }
     return Response.json([]);
   };
   const urlFor = id => `https://github.com/hdog960/Mythwrought/pull/503#issuecomment-${id}`;
@@ -133,6 +141,12 @@ test('Collector verifies report and pull HEAD, deduplicates, and preserves prior
   assert.equal(first.snapshot.reports.length, 1);
   assert.ok(first.snapshot.checks.every(item => item.head === current && item.mandatory === null));
   assert.equal(first.snapshot.production.version, 'actual-version');
+  assert.equal(first.snapshot.workflowLoad.queued.total, 7);
+  assert.equal(first.snapshot.workflowLoad.queued.runs.length, 1);
+  assert.equal(first.snapshot.health.sources['workflowLoad:queued'].state, 'partial');
+  assert.equal(first.snapshot.workflowLoad.in_progress.total, 0);
+  assert.equal(first.snapshot.workflowLoad.waiting, null);
+  assert.deepEqual(workflowBuckets(first.snapshot).map(item => item.total), [7, 0, null]);
   assert.ok(isSnapshot(first.snapshot));
   assert.equal(freshState(first.snapshot, Date.parse(instant) + 50 * 60_000), 'Stale snapshot');
   const failed = await collect({ previous: first.snapshot, state: first.state, now: new Date('2026-11-27T18:15:00Z'),
@@ -141,6 +155,8 @@ test('Collector verifies report and pull HEAD, deduplicates, and preserves prior
   assert.equal(failed.collectionSucceeded, false);
   assert.deepEqual(failed.snapshot.reports, first.snapshot.reports);
   assert.deepEqual(failed.snapshot.pulls, first.snapshot.pulls);
+  assert.deepEqual(failed.snapshot.workflowLoad, first.snapshot.workflowLoad);
+  assert.equal(workflowBuckets(failed.snapshot)[0].preserved, true);
   assert.equal(failed.snapshot.health.lastSuccess, first.snapshot.health.lastSuccess);
   assert.throws(() => publicVersion('<meta name="unrelated">'));
 });
@@ -161,4 +177,85 @@ test('Congestion grows with evidence, excludes deferral, and history deduplicate
   assert.equal(summarize(snapshot, 1).meaningful.length, 1);
   assert.equal(summarize(snapshot, 1).milestones, 1);
   assert.equal(summarize(snapshot, 1, Date.parse(instant) - 1).reports.length, 0);
+});
+
+test('A revision-backed estimate reflects throughput, additional scope, and verified completion', async () => {
+  const { remainingSessions, roadmapProgress } = await import('../src/estimates.mjs');
+  const milestone = (id, effort, complete = false, kind = 'development') => ({ id, label: id, effort, complete, kind });
+  const plan = [milestone('a', 2), milestone('b', 4), milestone('c', 6), milestone('d', 12)];
+  const make = (id, index, data) => parseReport(markdown({
+    reportId: id, sessionId: `work-${index}`, reportedAt: `2026-11-27T${String(10 + index).padStart(2, '0')}:00:00Z`, ...data,
+  }), developer, source, comment);
+  const reports = [
+    make('r1', 1, { roadmap: { revision: 'r1', milestones: plan }, newlyCompleted: ['a'] }),
+    make('r2', 2, { roadmapRevision: 'r1', newlyCompleted: ['b'] }),
+    make('r3', 3, { roadmapRevision: 'r1', newlyCompleted: ['c'] }),
+  ];
+  assert.ok(reports.every(Boolean));
+  assert.equal(remainingSessions(reports.slice(0, 2), developer.assignmentId), null);
+  const baseline = remainingSessions(reports, developer.assignmentId);
+  assert.deepEqual([baseline.optimistic, baseline.likely, baseline.conservative], [3, 3, 4]);
+  reports.push(make('r4', 4, { outcome: 'administration', roadmap: {
+    revision: 'r2', milestones: [...plan.map((item, index) => ({ ...item, complete: index < 3 })), milestone('e', 8)],
+  } }));
+  assert.equal(roadmapProgress(reports, developer.assignmentId).revision, 'r2');
+  const expanded = remainingSessions(reports, developer.assignmentId);
+  assert.deepEqual([expanded.optimistic, expanded.likely, expanded.conservative], [4, 5, 7]);
+  reports.push(make('r5', 5, { roadmapRevision: 'r2', newlyCompleted: ['d', 'e'], releaseReadiness: 'merged' }));
+  assert.equal(remainingSessions(reports, developer.assignmentId), null);
+  reports.push(make('r6', 6, { roadmapRevision: 'r2', releaseReadiness: 'fully accepted', outcome: 'administration' }));
+  assert.equal(remainingSessions(reports, developer.assignmentId).likely, 0);
+  assert.equal(make('wrong-revision', 1, { roadmapRevision: 'r2', roadmap: { revision: 'r1', milestones: plan } }), null);
+});
+
+test('Congestion distinguishes workflow counts from verified developer execution and preserves unknowns', () => {
+  const execution = { state: 'running', observedAt: instant, evidence: url };
+  const reported = parseReport(markdown({ execution, continuation: 'Continue the tested checkpoint.' }), developer, source, comment);
+  assert.deepEqual(reported.execution, execution);
+  assert.equal(parseReport(markdown({ execution: { ...execution, observedAt: '2026-11-27T19:00:00Z' } }), developer, source, comment), null);
+  const registered = { ...developer, head: current };
+  const snapshot = {
+    developers: [registered, registry.find(item => item.id === 'builder'), registry.find(item => item.id === 'cave')],
+    reports: [reported], health: { sources: {} }, workflowLoad: { queued: { total: 1, observedAt: instant,
+      runs: [{ id: 42, head: current, branch: developer.branch, status: 'queued' }] } },
+  };
+  const currentWork = developerWork(snapshot, undefined, Date.parse(instant));
+  assert.deepEqual(currentWork.map(item => item.state), ['running', 'unknown', 'deferred']);
+  assert.equal(currentWork[0].relatedWorkflow.status, 'queued');
+  assert.equal(developerWork(snapshot, undefined, Date.parse(instant) + 3 * 60 * 60_000)[0].state, 'unknown');
+  assert.equal(continuationFor(registered, reported), reported.continuation);
+  assert.equal(continuationFor({ ...registered, head: old }, reported), null);
+});
+
+test('Developer scopes require local labels and accept only canonical conversation links', () => {
+  const assignments = registry.slice(0, 2);
+  const labels = { [assignments[0].id]: 'business' };
+  assert.equal(accountOf(assignments[1], labels), 'unclassified');
+  assert.deepEqual(scopedDevelopers(assignments, 'business', labels), [assignments[0]]);
+  assert.deepEqual(scopedDevelopers(assignments, 'personal', labels), []);
+  assert.equal(conversationURL('https://chatgpt.com/c/example-id'), 'https://chatgpt.com/c/example-id');
+  assert.equal(conversationURL('https://chatgpt.com/g/g-example/c/example-id'), 'https://chatgpt.com/g/g-example/c/example-id');
+  assert.equal(conversationURL('https://chatgpt.com/c/example-id?secret=test'), null);
+  assert.equal(conversationURL('https://chatgpt.com.example.com/c/example-id'), null);
+});
+
+test('The automatic roster distinguishes recorded configuration from scheduler results', () => {
+  const automatic = registry.filter(item => item.category === 'automatic');
+  const verified = automatic.filter(item => item.scheduleObservedAt);
+  assert.equal(automatic.length, 15);
+  assert.equal(new Set(automatic.map(item => item.id)).size, 15);
+  assert.equal(verified.filter(item => item.scheduleEnabled).length, 7);
+  assert.equal(verified.filter(item => item.scheduleEnabled === false).length, 3);
+  assert.equal(verified.filter(item => item.lastSchedulerResult).length, 5);
+  assert.equal(verified.filter(item => item.lastSchedulerResult?.needsCreatorAction).length, 3);
+  assert.equal(verified.filter(item => item.lastSchedulerResult?.publicOutput).length, 2);
+  const states = developerWork({ developers: automatic, reports: [], health: { sources: {} } });
+  assert.equal(states.filter(item => item.state === 'recorded').length, 2);
+  assert.equal(states.filter(item => item.state === 'paused').length, 3);
+  assert.equal(states.filter(item => item.state === 'complete').length, 0);
+  const waterVisuals = automatic.find(item => item.id === 'water-world');
+  assert.equal(nextScheduledRun(waterVisuals, Date.parse('2026-11-27T20:26:00Z')), '2026-11-27T20:30:00.000Z');
+  assert.equal(nextScheduledRun(waterVisuals, Date.parse('2026-11-27T20:30:00Z')), '2026-11-27T21:30:00.000Z');
+  assert.equal(nextScheduledRun(automatic.find(item => item.id === 'acid-physics')), null);
+  assert.equal(nextScheduledRun(automatic.find(item => item.id === 'builder')), null);
 });

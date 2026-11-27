@@ -45,6 +45,10 @@ export function isSnapshot(data) {
   return nullable(data.mainHead, isSha) && nullable(data.health.lastAttempt, isISO) &&
     nullable(data.health.lastSuccess, isISO) && nullable(data.health.nextExpected, isISO) &&
     data.developers.every(item => isId(item.id) && isId(item.assignmentId) && nullable(item.head, isSha) &&
+      nullable(item.scheduleEnabled, value => typeof value === 'boolean') &&
+      nullable(item.scheduleObservedAt, isISO) && nullable(item.scheduleStartsAt, isISO) &&
+      nullable(item.lastSchedulerResult, value => isRecord(value) && isISO(value.completedAt) && isISO(value.observedAt) &&
+        typeof value.needsCreatorAction === 'boolean' && nullable(value.publicOutput, sourceLink)) &&
       Array.isArray(item.registeredSources) && item.registeredSources.every(text) &&
       CATEGORIES.includes(item.category) && text(item.name) && text(item.project) && text(item.authority) && text(item.status)) &&
     data.reports.every(item => isId(item.reportId) && isId(item.assignmentId) &&

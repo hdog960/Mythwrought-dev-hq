@@ -3,7 +3,7 @@ import { actions, badge, button, el, fields, header, icon, link, list, muted, pa
 import { remainingSessions, roadmapProgress } from './estimates.mjs';
 import { ideasPage } from './ideas.mjs';
 import { congestion, summarize } from './insights.mjs';
-import { accountLabels, accountOf, automaticSlots, continuationFor, conversationURL, scopedDevelopers } from './operations.mjs';
+import { accountLabels, accountOf, automaticSlots, continuationFor, conversationURL, nextScheduledRun, scopedDevelopers } from './operations.mjs';
 import { blockersPanel, workloadPanel } from './dashboard.mjs';
 import { creatorNotes, creatorNotesPage } from './creator-notes.mjs';
 
@@ -270,18 +270,23 @@ const teamNames = { manual: 'Manual Developers', codex: 'Codex Developers', auto
 
 function teamPanel(category, developers) {
   const group = developers.filter(item => item.category === category);
-  const shown = group.slice(0, category === 'automatic' ? 3 : 2);
+  const verifiedSchedules = group.filter(item => item.scheduleObservedAt);
+  const shown = (category === 'automatic' ? [...verifiedSchedules, ...group.filter(item => !item.scheduleObservedAt)] : group)
+    .slice(0, category === 'automatic' ? 3 : 2);
   const count = category === 'automatic' && accountScope === 'all'
     ? badge(`${group.length} / ${Math.max(group.length, automaticSlots)} roster entries`, 'green')
     : badge(String(group.length), categoryTone[category]);
   return panel(teamNames[category], [
-    category === 'automatic' && accountScope === 'all' ? muted(`${automaticSlots} roster slots. Individual schedules await verification.`) : null,
+    category === 'automatic' && accountScope === 'all'
+      ? muted(`${verifiedSchedules.filter(item => item.scheduleEnabled).length} enabled when checked · ${verifiedSchedules.filter(item => !item.scheduleEnabled).length} paused when checked · ${group.length - verifiedSchedules.length} unverified`) : null,
     shown.length ? rows(shown.map(developer => {
       const report = reportFor(developer);
       return row(developerLink(developer, developer.name), [
         developer.project, el('div', 'team-status', statusBadge(developer)),
         category === 'manual' ? actions(continuationButton(developer, report), openConversation(developer)) : null,
         category === 'manual' && !continuationFor(developer, report) ? muted('Awaiting a verified checkpoint.') : null,
+        category === 'automatic' && developer.scheduleObservedAt
+          ? scheduleBadge(developer) : null,
         category === 'codex' && report?.milestone ? el('span', '', `Milestone · ${report.milestone}`) : null,
       ]);
     })) : muted('No assignments match this account filter.'),
@@ -336,6 +341,11 @@ function home() {
     focus ? null : el('div', 'dashboard-grid', outcomes, productionPanel()))];
 }
 
+function scheduleBadge(developer) {
+  return badge(developer.scheduleEnabled ? 'Schedule enabled when checked' : 'Schedule paused when checked',
+    developer.scheduleEnabled ? 'green' : 'gold');
+}
+
 function developerIndex(category = 'all') {
   const filterBar = el('div', 'filters', ...Object.entries({ all: 'All developers', ...categoryName }).map(([value, name]) => {
     const control = link(name, value === 'all' ? '#developers' : `#developers/${value}`, 'button filter');
@@ -351,11 +361,13 @@ function developerIndex(category = 'all') {
     return el('article', 'panel', badge(labelFor(developer.category), categoryTone[developer.category]),
       developerLink(developer, developer.name, 'card-link'), el('p', '', developer.project),
       muted(report ? `Latest outcome · ${report.outcome}` : developer.authority), el('div', '', statusBadge(developer)),
+      developer.category === 'automatic' && developer.scheduleObservedAt
+        ? [muted(`Hourly at :${String(developer.minute).padStart(2, '0')} · ${developer.timezone}`), el('div', '', scheduleBadge(developer))] : null,
       developer.category === 'manual' ? actions(continuationButton(developer, report), openConversation(developer)) : null,
       developer.category === 'manual' && !continuationFor(developer, report) ? muted('Awaiting a verified checkpoint.') : null);
   });
   return [header(teamNames[category] ?? 'Developers', category === 'automatic' && accountScope === 'all'
-    ? `${matches.length} known roster entries across ${Math.max(automaticSlots, matches.length)} slots. Individual assignments and schedules await verification.`
+    ? `${matches.length} roster entries. ${matches.filter(item => item.scheduleObservedAt).length} schedules verified from the connected automation account.`
     : 'Browse assignments. Set account labels in developer preferences.'), accountFilter(), filterBar,
     tiles.length || gaps ? el('div', 'cards', tiles, Array.from({ length: gaps }, (_, index) =>
       el('article', 'panel empty-slot', el('h2', '', `Roster slot ${matches.length + index + 1}`), muted('Developer and schedule unverified.'))))
@@ -389,10 +401,20 @@ function developerDetail(id) {
     el('h3', '', 'Content progress'), list(report?.quantitative?.map(item =>
       `${item.amount}${item.target === null ? '' : ` / ${item.target}`} ${item.unit} · ${item.state}`)),
   ], { iconName: 'map' });
+  const recorded = developer.lastSchedulerResult;
   const schedule = developer.category === 'automatic' ? panel('Automation reporting', [
-    fields([['Roster slot', developer.minute === null ? 'Unknown' : `:${String(developer.minute).padStart(2, '0')} · creator brief`],
-      ['Schedule timezone', developer.timezone], ['Last verified report', report && time(report.reportedAt)],
-      ['Next expected run', 'Unknown'], ['Scheduler telemetry', 'Unavailable']]),
+    fields([['Hourly slot', developer.minute === null ? 'Unknown' : `:${String(developer.minute).padStart(2, '0')}${developer.scheduleObservedAt ? '' : ' · creator brief'}`],
+      ['Schedule timezone', developer.timezone],
+      ['Configuration when checked', developer.scheduleEnabled == null ? 'Unknown' : developer.scheduleEnabled ? 'Enabled' : 'Paused'],
+      ['Schedule verified', developer.scheduleObservedAt ? time(developer.scheduleObservedAt) : 'Unknown'],
+      ['Next scheduled occurrence', developer.scheduleEnabled === false ? 'Paused' : time(nextScheduledRun(developer))],
+      ['Last recorded run completion', time(recorded?.completedAt)],
+      ['Scheduler result checked', time(recorded?.observedAt)],
+      ['Creator action on last result', recorded ? (recorded.needsCreatorAction ? 'Requested' : 'None reported') : 'Unknown'],
+      ['Public output linked to last result', recorded?.publicOutput ? link('Open commit', recorded.publicOutput) : 'Unknown'],
+      ['Last verified developer report', report && time(report.reportedAt)],
+      ['Reported run state', report?.execution ? `${report.execution.state} · observed` : 'Unknown']]),
+    developer.scheduleEnabled === true ? muted('The next occurrence is calculated from the last verified schedule.') : null,
   ], { iconName: 'signal' }) : null;
   return [header(developer.name, developer.project, actions(link('All developers', '#developers', 'button'), statusBadge(developer))),
     el('div', 'main-grid', el('div', 'stack', progress, panel('Blockers and dependencies', [

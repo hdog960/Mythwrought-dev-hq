@@ -5,7 +5,7 @@ import { createGitHub } from '../scripts/github.mjs';
 import { appendReports, parseReport } from '../scripts/report.mjs';
 import { approvalQueue, cyclesIn, estimateFor, freshState, isSnapshot, latestFor, sourceLink } from '../src/model.mjs';
 import { registry } from '../config/sources.mjs';
-import { accountOf, continuationFor, conversationURL, developerWork, scopedDevelopers, workflowBuckets } from '../src/operations.mjs';
+import { accountOf, continuationFor, conversationURL, developerWork, nextScheduledRun, scopedDevelopers, workflowBuckets } from '../src/operations.mjs';
 
 const developer = registry[0];
 const instant = '2026-11-27T18:00:00Z';
@@ -237,4 +237,25 @@ test('Developer scopes require local labels and accept only canonical conversati
   assert.equal(conversationURL('https://chatgpt.com/g/g-example/c/example-id'), 'https://chatgpt.com/g/g-example/c/example-id');
   assert.equal(conversationURL('https://chatgpt.com/c/example-id?secret=test'), null);
   assert.equal(conversationURL('https://chatgpt.com.example.com/c/example-id'), null);
+});
+
+test('The automatic roster distinguishes recorded configuration from scheduler results', () => {
+  const automatic = registry.filter(item => item.category === 'automatic');
+  const verified = automatic.filter(item => item.scheduleObservedAt);
+  assert.equal(automatic.length, 15);
+  assert.equal(new Set(automatic.map(item => item.id)).size, 15);
+  assert.equal(verified.filter(item => item.scheduleEnabled).length, 7);
+  assert.equal(verified.filter(item => item.scheduleEnabled === false).length, 3);
+  assert.equal(verified.filter(item => item.lastSchedulerResult).length, 5);
+  assert.equal(verified.filter(item => item.lastSchedulerResult?.needsCreatorAction).length, 3);
+  assert.equal(verified.filter(item => item.lastSchedulerResult?.publicOutput).length, 2);
+  const states = developerWork({ developers: automatic, reports: [], health: { sources: {} } });
+  assert.equal(states.filter(item => item.state === 'recorded').length, 2);
+  assert.equal(states.filter(item => item.state === 'paused').length, 3);
+  assert.equal(states.filter(item => item.state === 'complete').length, 0);
+  const waterVisuals = automatic.find(item => item.id === 'water-world');
+  assert.equal(nextScheduledRun(waterVisuals, Date.parse('2026-11-27T20:26:00Z')), '2026-11-27T20:30:00.000Z');
+  assert.equal(nextScheduledRun(waterVisuals, Date.parse('2026-11-27T20:30:00Z')), '2026-11-27T21:30:00.000Z');
+  assert.equal(nextScheduledRun(automatic.find(item => item.id === 'acid-physics')), null);
+  assert.equal(nextScheduledRun(automatic.find(item => item.id === 'builder')), null);
 });

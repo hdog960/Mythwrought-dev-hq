@@ -32,8 +32,10 @@ export function workloadPanel(snapshot, developers, { expanded = false } = {}) {
       observed.length ? [...grouped].filter(([, items]) => items.length).map(([state, items]) =>
         el('details', 'activity-group', el('summary', '', `${workLabels[state]} · ${items.length}`),
           rows(items.map(item => row(developerLink(item.developer),
-            [item.stale ? 'Older observation · ' : item.report ? 'Verified report · ' : 'Awaiting verified report',
-              item.report ? link(time(item.observedAt), item.source) : null,
+            [item.stale ? 'Older observation · ' : item.report ? 'Verified report · '
+              : ['paused', 'recorded'].includes(item.state) ? 'Scheduler observed · ' : 'Awaiting verified report',
+              item.report ? link(time(item.observedAt), item.source)
+                : ['paused', 'recorded'].includes(item.state) ? time(item.observedAt) : null,
               item.relatedWorkflow ? el('div', '', link(`Linked GitHub run · ${workflowLabels[item.relatedWorkflow.status]}`, item.relatedWorkflow.source)) : null],
             badge(workLabels[item.state], tones[item.state])))))) : muted('No assignments match this account filter.'),
       el('h3', '', 'GitHub workflow details'),
@@ -50,6 +52,7 @@ export function blockersPanel(snapshot, developers, expanded = false) {
   const { entries, dependencies, reporting } = blockerSummary(snapshot, developers);
   const shown = expanded ? entries : entries.slice(0, 3);
   const constraints = expanded ? dependencies : dependencies.slice(0, 2);
+  const followUps = developers.filter(item => item.lastSchedulerResult?.needsCreatorAction);
   return panel('Blockers', [
     muted(reporting ? `${reporting} / ${developers.length} assignments reported blocker status.` :
       'Developer blocker status is unknown until reports arrive.'),
@@ -59,6 +62,8 @@ export function blockersPanel(snapshot, developers, expanded = false) {
       item.resolution ? el('div', '', `Next action · ${item.resolution}`) : null,
       item.detectedAt ? el('div', '', 'Detected ', time(item.detectedAt)) : null,
     ], badge('Reported blocker', 'red')))) : reporting ? muted('No confirmed blockers in the assignments that reported status.') : null,
+    followUps.length ? el('div', 'constraints', el('h3', '', 'Automation follow-up'),
+      list(followUps.map(developer => el('span', '', developerLink(developer), ' · Creator action requested in the last scheduler result')))) : null,
     constraints.length ? el('div', 'constraints', el('h3', '', 'Release constraints'), list(constraints.map(({ developer, edges }) => {
       const prerequisites = edges.map(edge => snapshot.developers.find(item => item.assignmentId === edge.prerequisite)?.project ?? edge.prerequisite);
       return el('span', '', developerLink(developer), ' · ', link(`Waiting for ${prerequisites.join(', ')}`, edges[0].source));

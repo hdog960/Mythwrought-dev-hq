@@ -2,10 +2,10 @@ import { latestFor, WORKFLOW_STATES } from './model.mjs';
 
 export const automaticSlots = 15;
 export const accountLabels = { personal: 'Personal', business: 'Business', unclassified: 'Unclassified' };
-export const workStates = ['running', 'queued', 'waiting', 'blocked', 'complete', 'finished', 'failed', 'deferred', 'unknown'];
+export const workStates = ['running', 'queued', 'waiting', 'blocked', 'complete', 'finished', 'recorded', 'failed', 'paused', 'deferred', 'unknown'];
 export const workLabels = {
   running: 'Running', queued: 'Queued', waiting: 'Waiting', blocked: 'Blocked', complete: 'Complete',
-  finished: 'Last session finished', failed: 'Last session failed', deferred: 'Deferred', unknown: 'Unknown',
+  finished: 'Last session finished', recorded: 'Scheduled run recorded', failed: 'Last session failed', paused: 'Schedule paused', deferred: 'Deferred', unknown: 'Unknown',
 };
 export const workflowLabels = { queued: 'Queued', in_progress: 'Running', waiting: 'Waiting' };
 
@@ -53,13 +53,15 @@ export function developerWork(snapshot, developers = snapshot.developers, now = 
     const deferred = developer.deferred || developer.status === 'Deferred per brief';
     const state = deferred ? 'deferred' : current ? observed.state
       : report?.releaseReadiness === 'fully accepted' ? 'complete'
+      : developer.scheduleEnabled === false ? 'paused'
+      : !report && developer.lastSchedulerResult ? 'recorded'
       : !report || observed ? 'unknown'
       : ['waiting', 'blocked', 'failed'].includes(report.outcome) ? report.outcome : 'finished';
     const relatedWorkflow = developer.head && developer.branch && developer.repository?.toLowerCase() === 'hdog960/mythwrought'
       ? runs.find(run => run.head === developer.head && run.branch === developer.branch)
       : null;
     return { developer, report, state, relatedWorkflow, source: observed?.evidence ?? report?.source ?? null,
-      observedAt: observed?.observedAt ?? report?.reportedAt ?? null, stale: Boolean(observed && !current) };
+      observedAt: observed?.observedAt ?? report?.reportedAt ?? developer.lastSchedulerResult?.observedAt ?? developer.scheduleObservedAt ?? null, stale: Boolean(observed && !current) };
   });
 }
 
@@ -77,4 +79,18 @@ export function blockerSummary(snapshot, developers = snapshot.developers) {
     if (required.length) dependencies.push({ developer, edges: required });
   }
   return { entries, dependencies, reporting };
+}
+
+export function nextScheduledRun(developer, now = Date.now()) {
+  if (developer.scheduleEnabled !== true || !Number.isInteger(developer.minute) || !developer.timezone) return null;
+  const start = Date.parse(developer.scheduleStartsAt);
+  const after = Math.floor(now / 60_000) * 60_000 + 60_000;
+  let candidate = Math.max(after, Number.isFinite(start) ? start : after);
+  try {
+    const minute = new Intl.DateTimeFormat('en-US', { timeZone: developer.timezone, minute: '2-digit' });
+    for (let offset = 0; offset < 120; offset++, candidate += 60_000) {
+      if (Number(minute.format(candidate)) === developer.minute) return new Date(candidate).toISOString();
+    }
+  } catch { /* Invalid configured timezone. */ }
+  return null;
 }

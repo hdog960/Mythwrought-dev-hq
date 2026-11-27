@@ -1,6 +1,6 @@
 # Developer reports and onboarding
 
-HQ prefers existing authorized public checkpoint comments or dedicated public HQ tracking issues. A source is enrolled by an HQ configuration change mapping one assignment to a repository, issue or pull request number, and explicitly approved GitHub publisher account IDs. Current intake reads registered PRs #502 and #503. Their existing comments have no accepted HQ reports. Approval for a new source or an amendment to an active developer or automation belongs to the creator.
+HQ prefers existing authorized public checkpoint comments or dedicated public HQ tracking issues. A source is enrolled by an HQ configuration change mapping one assignment to a repository, issue or pull request number, and explicitly approved GitHub publisher account IDs. Current intake reads game PRs #502 and #503 and HQ PR #1. HQ PR #1 is the checkpoint for the Development HQ assignment. Approval for a new source or an amendment to an active developer or automation belongs to the creator.
 
 ## Report format
 
@@ -41,6 +41,6 @@ Examples rejected by design include an abbreviated commit, mismatched assignment
 | Master :00 | Current building ownership confirmed by creator issue #507. Verify active checkpoint channel and schedule timezone. |
 | :12, :24, :36, :48 | Public toolkit recognizes lane identities and points to existing automation instructions. Verify the current assignments, schedules and approved reporting surfaces with the creator. |
 | Floating Islands | Named by the brief and public creator issue #498. Confirm the current assignment and checkpoint path. |
-| Development HQ | This repository is the project source. Enroll an HQ checkpoint source after an authorized report channel is agreed. |
+| Development HQ | HQ PR #1 is the enrolled checkpoint source. Its reports bind to this repository’s main branch. |
 
 Symptoms commonly come from a report posted to a different issue, an unmatched branch or PR HEAD, a pending Actions run, malformed JSON, or a report ID reused for a correction. Check **More → Reporting coverage** for a source error and compare the time of the report with the last attempted collection. The next step after authorized onboarding is one genuine verified report from each category and coverage reconciliation for each remaining source.

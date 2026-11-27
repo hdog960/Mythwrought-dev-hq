@@ -22,7 +22,7 @@
 
 ## Coverage and dependencies
 
-Two registered public intake PRs, 14 provisional roster entries, zero genuine v1 reports. Several active schedules, private reporting routes, creator authorization sources, and remaining roadmaps require reconciliation. The public protection API could not confirm mandatory check requirements. The Age of Beasts release dependency edges remain required per PR #502. The authorized publish path requires valid write access to the HQ repository. Current GitHub authentication returned HTTP 401, so source changes and this checkpoint are local.
+Two registered public intake PRs, 14 provisional roster entries, zero genuine v1 reports. Several active schedules, private reporting routes, creator authorization sources, and remaining roadmaps require reconciliation. The public protection API could not confirm mandatory check requirements. The Age of Beasts release dependency edges remain required per PR #502. The authorized publish path requires valid write access to the HQ repository. At the end of Session 1, GitHub authentication returned HTTP 401. Access was restored afterward, and the checkpoint was pushed to the isolated HQ branch.
 
 The highest-value objective is to establish the authorized HQ intake and staging path, complete one verified report from each developer category, and use that real evidence to drive remaining-session estimates, missed-report detection, dependency and approval resolution, and release qualification. HQ production merge and release need explicit creator approval. Physical iPhone Safari and installed Home Screen acceptance belong to the creator.
 

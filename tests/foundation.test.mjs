@@ -103,6 +103,8 @@ test('Collector verifies report and pull HEAD, deduplicates, and preserves prior
     if (href.startsWith('https://hdog960.github.io/')) {
       return new Response('<meta name="mythwrought-release" content="actual-version">');
     }
+    if (path === '/repos/hdog960/Mythwrought-dev-hq/branches/main') return Response.json({ commit: { sha: base } });
+    if (path === '/repos/hdog960/Mythwrought-dev-hq/issues/1/comments') return Response.json([]);
     assert.ok(href.startsWith(github));
     if (path.endsWith('/git/ref/heads/main')) return Response.json({ object: { sha: base } });
     if (path.endsWith('/pulls/503')) return Response.json(fakePull);
@@ -125,6 +127,9 @@ test('Collector verifies report and pull HEAD, deduplicates, and preserves prior
   const urlFor = id => `https://github.com/hdog960/Mythwrought/pull/503#issuecomment-${id}`;
   const first = await collect({ fetcher: fakeFetch, now: new Date(instant) });
   assert.equal(first.snapshot.developers[0].head, current);
+  const hqDeveloper = first.snapshot.developers.find(item => item.id === 'hq');
+  assert.equal(hqDeveloper.head, base);
+  assert.equal(hqDeveloper.headStatus, 'Repository branch confirmed');
   assert.equal(first.snapshot.reports.length, 1);
   assert.ok(first.snapshot.checks.every(item => item.head === current && item.mandatory === null));
   assert.equal(first.snapshot.production.version, 'actual-version');

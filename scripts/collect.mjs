@@ -176,10 +176,12 @@ export async function collect({ previous, state, token, fetcher = fetch, now = n
       const prior = previous?.developers.find(item => item.assignmentId === developer.assignmentId);
       const result = await request(pathFor(developer.repository, `/branches/${encodeURIComponent(developer.branch)}`), key);
       const head = result.unchanged ? prior?.branchHead : sha(result.data?.commit?.sha);
+      if (!developer.pr) return { ...projected, branchHead: head ?? null, head: head ?? null,
+        headStatus: head ? 'Repository branch confirmed' : 'Branch unavailable' };
       return { ...projected, branchHead: head ?? null, head: candidate?.head === head ? head : null,
         headStatus: head && head === candidate?.head ? 'PR and branch match' : 'PR and branch differ' };
     }));
-    if (resolved.some(item => item.branch && !item.head)) mark('registeredBranches', 'partial', 'One or more registered PR heads differ from their branches');
+    if (resolved.some(item => item.branch && !item.head)) mark('registeredBranches', 'partial', 'One or more registered branches or PR heads could not be confirmed');
     return resolved;
   });
 

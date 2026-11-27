@@ -47,7 +47,9 @@ export const registry = [
     authority: 'Project named in creator issue and HQ brief', source: git(game, '/issues/498'),
   }),
   assignment('hq', 'codex', 'Development HQ', 'Mythwrought development management', {
-    repository: hq, authority: 'Creator commission and HQ repository', source: git(hq),
+    repository: hq, authority: 'Creator commission and HQ release checkpoint', branch: 'main',
+    source: git(hq, '/pull/1'),
+    reportSources: [{ repository: hq, number: 1, publishers: [owner] }],
   }),
 ];
 

@@ -18,11 +18,15 @@ Use one exact marker and JSON block. The executable v1 schema is `scripts/report
 | Identity | `schemaVersion: 1`, `publish: true`, `reportId`, `developerId`, `assignmentId`, `category`, `sessionId`, `reportedAt` |
 | Source | `repository`, `branch`, full `commit`, `pull`, `issue`, `checkpoint` |
 | Progress | `outcome`, `completed`, `milestone`, `roadmapRevision`, `roadmap`, `newlyCompleted`, `quantitative`, `remaining`, `estimate`, `releaseReadiness` |
-| Coordination | `blockers`, `dependencyIds`, `qualification`, `reusableEvidence`, `decisions`, `nextObjective`, `continuation` |
+| Coordination | `execution`, `blockers`, `dependencyIds`, `qualification`, `reusableEvidence`, `decisions`, `nextObjective`, `continuation` |
 
 Required identity fields, repository, branch, commit, and outcome must always be present. IDs are stable lowercase letters, digits and hyphens. Dates are UTC ISO 8601. Use one of `development`, `qualification`, `administration`, `waiting`, `blocked`, or `failed` for outcome. Qualified and released quantities require their own evidence. An estimate is an object with numeric `optimistic`, `likely`, and `conservative` session ranges, `confidence`, and a `rationale`. A blocker has stable `id`, `category`, `description`, `detectedAt`, a public `evidence` URL, and optional `owner` and `resolution`. Use a new report ID for a correction. Earlier reports remain visible in history. Keep decisions under one stable decision ID across reports. Creator authorizations require a separately enrolled creator source.
 
 Examples rejected by design include an abbreviated commit, mismatched assignment, report block without `publish: true`, extra field `privateNotes`, a nonregistered publisher, or an exact commit the collector cannot tie to the enrolled branch. Secret-like values and email addresses are rejected. Text publishes to a public site. Verify that notes, prompts and links are public-safe before posting.
+
+## Developer run status
+
+Use the optional `execution` object for the latest verified workflow of the developer or automation itself. Include `state` (queued, running, waiting, blocked, or complete), `observedAt` in UTC, and a public `evidence` link from an allowlisted repository. The observation precedes or matches the report timestamp. HQ groups current reports by state and marks observations older than two hours as unknown for active status. A completed session and project acceptance have distinct fields. Keep CI workflow evidence in the existing GitHub or qualification fields.
 
 ## Estimate from milestones
 

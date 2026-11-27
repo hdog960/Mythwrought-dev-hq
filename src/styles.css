@@ -181,3 +181,32 @@ textarea { resize: vertical; }
   .hero-emblem { min-height: 96px; transform: scale(.67); }
   .hero .actions { margin-top: 8px; }
 }
+
+.operations-home { display: grid; gap: 15px; }
+.account-filter { margin: 15px 0; align-items: center; }
+.account-filter > span { margin-right: 6px; }
+.filter[aria-current=page] { background: #37284e; border-color: #6b5194; color: #f2e5ff; }
+.team-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; align-items: stretch; }
+.team-card { display: flex; flex-direction: column; border-top: 2px solid var(--purple); }
+.team-card.manual { border-top-color: var(--blue); }
+.team-card.automatic { border-top-color: var(--green); }
+.team-card > .actions { margin-top: auto; padding-top: 12px; }
+.team-card .row-main { width: 100%; }
+.team-card .row-meta > .actions { margin: 7px 0; }
+.team-status { margin-top: 4px; }
+.empty-slot { border-style: dashed; }
+.dashboard-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 15px; align-items: start; }
+.activity-counts { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(94px, 100%), 1fr)); gap: 7px; margin: 8px 0; }
+.activity-count { display: grid; gap: 3px; min-width: 0; padding: 8px 9px; border: 1px solid var(--line); border-radius: 8px; background: var(--raised); }
+.activity-count strong { font-size: 1.15rem; }
+.activity-as-of { display: block; }
+.workload-panel > h3:not(:first-child), .constraints { margin-top: 13px; }
+.activity-group { border-bottom: 1px solid var(--line); }
+.activity-group[open] { padding-bottom: 12px; }
+@media (max-width: 940px) {
+  .team-grid { grid-template-columns: repeat(2, minmax(0,1fr)); }
+}
+@media (max-width: 650px) {
+  .team-grid, .dashboard-grid { grid-template-columns: 1fr; }
+  .account-filter > span { flex-basis: 100%; }
+}

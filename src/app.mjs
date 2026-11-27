@@ -3,12 +3,18 @@ import { actions, badge, button, el, fields, header, icon, link, list, muted, pa
 import { remainingSessions, roadmapProgress } from './estimates.mjs';
 import { ideasPage } from './ideas.mjs';
 import { congestion, summarize } from './insights.mjs';
+import { accountLabels, accountOf, automaticSlots, continuationFor, conversationURL, scopedDevelopers } from './operations.mjs';
+import { blockersPanel, workloadPanel } from './dashboard.mjs';
+import { creatorNotes, creatorNotesPage } from './creator-notes.mjs';
 
 const routes = [
   ['home', 'Home', 'home'], ['developers', 'Developers', 'users'], ['roadmap', 'Roadmap', 'map'],
   ['inbox', 'Creator Inbox', 'inbox'], ['more', 'More', 'more'],
 ];
 const moreRoutes = [
+  ['notes', 'Creator Notes', 'Private notes stored in this browser'],
+  ['congestion', 'Congestion', 'Workflow run totals and reported developer status'],
+  ['blockers', 'Blockers', 'Reported impediments and release constraints'],
   ['coverage', 'Reporting coverage', 'Source freshness, synchronization, and onboarding'],
   ['activity', 'GitHub activity', 'Open PRs, recently closed PRs, workflows, and issues'],
   ['releases', 'Release center', 'Public production identity and GitHub deployment history'],
@@ -22,7 +28,8 @@ const categoryTone = { manual: 'blue', automatic: 'green', codex: 'purple' };
 const statusTone = { 'Release hold': 'orange', 'Merge embargo': 'red', 'Report connected': 'green' };
 const sourceNames = { branches: 'Game main reference', pulls: 'Pull requests', issues: 'Issues', workflows: 'Workflows',
   releases: 'GitHub releases', deployments: 'Pages deployments', production: 'Public release identity',
-  directives: 'Creator directives', registeredBranches: 'Registered branch HEADs', checks: 'Exact-commit checks', reports: 'Developer reports' };
+  directives: 'Creator directives', 'workflowLoad:queued': 'Queued workflows',
+  'workflowLoad:in_progress': 'Running workflows', 'workflowLoad:waiting': 'Waiting workflows', registeredBranches: 'Registered branch HEADs', checks: 'Exact-commit checks', reports: 'Developer reports' };
 const nav = document.querySelector('#navigation');
 const main = document.querySelector('#main');
 const health = document.querySelector('#health');
@@ -35,7 +42,9 @@ let snapshot = null;
 let cached = false;
 let loading = false;
 let loadError = false;
-let filter = 'all';
+const accountOptions = { all: 'All', ...accountLabels };
+let accountScope = readLocal('account-scope-v1', 'all');
+if (!Object.hasOwn(accountOptions, accountScope)) accountScope = 'all';
 let focus = readLocal('focus', false) === true;
 let activePath = null;
 let toastTimer;
@@ -130,8 +139,9 @@ async function load(manual = false) {
     loading = false;
     refresh.disabled = false;
     renderStatus();
-    const editingIdeas = activePath === 'more/ideas';
-    if (!editingIdeas && (activePath === null || former?.generatedAt !== snapshot?.generatedAt || loadError !== priorError)) render();
+    const editingLocal = activePath === 'more/ideas' || activePath === 'more/notes' ||
+      Boolean(main.querySelector('form[data-preferences-dirty]'));
+    if (!editingLocal && (activePath === null || former?.generatedAt !== snapshot?.generatedAt || loadError !== priorError)) render();
   }
 }
 
@@ -163,17 +173,11 @@ function setupWorker() {
 
 const developerLink = (developer, label = developer.project, klass) => link(label, '#developers/' + developer.id, klass);
 const reportFor = developer => latestFor(snapshot.reports, developer.assignmentId);
-const verifiedCount = () => snapshot.developers.filter(reportFor).length;
 const coverageOf = field => snapshot.developers.filter(developer => Array.isArray(reportFor(developer)?.[field])).length;
 const reportStatus = developer => developer.status !== 'Unknown' ? developer.status
   : reportFor(developer) ? 'Report connected' : developer.status;
 const statusBadge = developer => badge(reportStatus(developer), statusTone[reportStatus(developer)]);
 const labelFor = category => categoryName[category] ?? category;
-
-function stat(label, value, description, symbol) {
-  return el('div', 'stat', el('div', 'stat-title', icon(symbol), label),
-    el('div', 'stat-value', value), el('p', 'stat-caption', description));
-}
 
 function productionPanel() {
   const production = snapshot.production;
@@ -186,18 +190,112 @@ function productionPanel() {
   ], { iconName: 'globe' });
 }
 
+function preferences() {
+  const data = readLocal('developer-preferences-v1', {});
+  return (data && typeof data === 'object' && !Array.isArray(data)) ? data : {};
+}
+
+function scopedAssignments() {
+  const labels = Object.fromEntries(Object.entries(preferences()).map(([id, entry]) => [id, entry?.account]));
+  return scopedDevelopers(snapshot.developers, accountScope, labels);
+}
+
+function accountFilter() {
+  const controls = el('div', 'filters account-filter', el('span', 'muted', 'Developer account'),
+    ...Object.entries(accountOptions).map(([value, label]) => {
+      const control = button(label, () => {
+        accountScope = value;
+        saveLocal('account-scope-v1', value);
+        render();
+        document.querySelector('.account-filter [aria-pressed="true"]')?.focus();
+      }, 'filter');
+      control.setAttribute('aria-pressed', String(value === accountScope));
+      return control;
+    }));
+  controls.setAttribute('role', 'group');
+  controls.setAttribute('aria-label', 'Developer account filter');
+  return controls;
+}
+
+function continuationButton(developer, report, primary = false) {
+  const prompt = continuationFor(developer, report);
+  const control = button('Continue Development', () => {
+    const current = snapshot.developers.find(item => item.id === developer.id);
+    const latest = current && reportFor(current);
+    const latestPrompt = current && continuationFor(current, latest);
+    if (!latestPrompt) {
+      notify('A current continuation checkpoint is unavailable.');
+      return;
+    }
+    copy(latestPrompt, `Checkpoint ${short(latest.commit)} copied`);
+  }, primary ? 'primary' : '');
+  control.disabled = !prompt;
+  return control;
+}
+
+function openConversation(developer) {
+  const href = conversationURL(preferences()[developer.id]?.conversation);
+  return href ? Object.assign(el('a', 'button', 'Open conversation'), { href, rel: 'noopener noreferrer', target: '_blank' }) : null;
+}
+
+function developerPreferences(developer) {
+  const current = preferences()[developer.id];
+  const account = el('select', '', ...Object.entries(accountLabels).map(([value, label]) =>
+    Object.assign(el('option', '', label), { value })));
+  account.value = accountOf(developer, { [developer.id]: current?.account });
+  const chat = Object.assign(el('input'), { type: 'url', maxLength: 240,
+    placeholder: 'https://chatgpt.com/c/…', value: conversationURL(current?.conversation) ?? '' });
+  const form = el('form', '', el('label', '', 'Developer account', account),
+    developer.category === 'manual' ? el('label', '', 'ChatGPT conversation', chat) : null,
+    actions(button('Save preferences', null, 'primary', 'submit')));
+  form.addEventListener('input', () => { form.dataset.preferencesDirty = ''; });
+  form.addEventListener('submit', event => {
+    event.preventDefault();
+    const conversation = chat.value.trim() ? conversationURL(chat.value.trim()) : null;
+    if (chat.value.trim() && !conversation) {
+      notify('Enter a ChatGPT conversation URL without a query or fragment.');
+      return;
+    }
+    if (!saveLocal('developer-preferences-v1', { ...preferences(), [developer.id]: { account: account.value, conversation } })) {
+      notify('Could not save browser preferences.');
+      return;
+    }
+    render();
+    notify('Saved on this device');
+  });
+  return panel('Developer preferences', [muted('Account labels and conversation links are saved in this browser.'), form], { iconName: 'users' });
+}
+
+const teamNames = { manual: 'Manual Developers', codex: 'Codex Developers', automatic: 'Automatic Developers' };
+
+function teamPanel(category, developers) {
+  const group = developers.filter(item => item.category === category);
+  const shown = group.slice(0, category === 'automatic' ? 3 : 2);
+  const count = category === 'automatic' && accountScope === 'all'
+    ? badge(`${group.length} / ${Math.max(group.length, automaticSlots)} roster entries`, 'green')
+    : badge(String(group.length), categoryTone[category]);
+  return panel(teamNames[category], [
+    category === 'automatic' && accountScope === 'all' ? muted(`${automaticSlots} roster slots. Individual schedules await verification.`) : null,
+    shown.length ? rows(shown.map(developer => {
+      const report = reportFor(developer);
+      return row(developerLink(developer, developer.name), [
+        developer.project, el('div', 'team-status', statusBadge(developer)),
+        category === 'manual' ? actions(continuationButton(developer, report), openConversation(developer)) : null,
+        category === 'manual' && !continuationFor(developer, report) ? muted('Awaiting a verified checkpoint.') : null,
+        category === 'codex' && report?.milestone ? el('span', '', `Milestone · ${report.milestone}`) : null,
+      ]);
+    })) : muted('No assignments match this account filter.'),
+    actions(link(`View all ${category} developers`, `#developers/${category}`, 'button')),
+  ], { iconName: category === 'automatic' ? 'bolt' : 'users', end: count, tone: 'team-card ' + category });
+}
+
 function home() {
-  const queue = approvalQueue(snapshot);
-  const pressure = congestion(snapshot);
-  const verified = verifiedCount();
-  const total = snapshot.developers.length;
-  const decisionsKnown = coverageOf('decisions');
-  const blockersKnown = coverageOf('blockers');
+  const developers = scopedAssignments();
+  const assignments = new Set(developers.map(item => item.assignmentId));
+  const queue = approvalQueue(snapshot).filter(item => assignments.has(item.developer.assignmentId));
+  const verified = developers.filter(reportFor).length;
+  const reports = snapshot.reports.filter(item => item.outcome === 'development' && assignments.has(item.assignmentId)).slice(-4).reverse();
   const first = queue[0];
-  const blockers = snapshot.developers.flatMap(developer => (reportFor(developer)?.blockers ?? [])
-    .filter(item => !['CI waiting', 'deferral'].includes(item.category)).map(blocker => ({ developer, blocker })));
-  const reports = snapshot.reports.filter(item => item.outcome === 'development').slice(-4).reverse();
-  const lanes = ['unified', 'beasts', 'builder', 'hq'].map(id => snapshot.developers.find(item => item.id === id)).filter(Boolean);
   const focusButton = button(focus ? 'Exit Focus Mode' : 'Focus Mode', () => {
     focus = !focus;
     saveLocal('focus', focus);
@@ -208,55 +306,60 @@ function home() {
   Object.assign(logo, { src: './assets/icon-512.png', alt: '' });
   const hero = el('section', 'hero',
     el('div', 'hero-copy', el('h1', '', focus ? 'Creator focus' : 'Development overview'),
-      el('p', '', 'See project status, creator decisions, and release evidence for Mythwrought.'),
+      el('p', '', 'See developer assignments, active workflows, and release evidence for Mythwrought.'),
       actions(focusButton)), el('div', 'hero-emblem', logo));
-  const cards = el('div', 'stats',
-    stat('Developer roster', String(total), `${verified} ${verified === 1 ? 'source' : 'sources'} with verified reports`, 'users'),
-    stat('Creator decisions', queue.length || decisionsKnown ? String(queue.length) : 'Unknown',
-      decisionsKnown ? `${decisionsKnown} / ${total} report decision status` : 'Awaiting decision status', 'inbox'),
-    stat('Reported blockers', blockersKnown ? String(new Set(blockers.map(entry => entry.blocker.id)).size) : 'Unknown',
-      blockersKnown ? `${blockersKnown} / ${total} report blocker status` : 'Awaiting blocker status', 'warning'),
-    stat('Congestion', pressure.score === null ? 'Unknown' : String(pressure.score), pressure.coverage ?
-      `${pressure.coverage}% evidence coverage` : 'Coverage needed for a score', 'signal'));
-  const nextAction = panel('Creator action', [el('h3', '', first?.action ??
-    (verified < snapshot.developers.length ? 'Confirm developer reporting' : 'Review reporting coverage')),
-    muted(first?.reason ?? 'Connect registered checkpoints to surface developer progress, blockers, and decisions.'),
-    actions(link(first ? 'Open Creator Inbox' : 'View reporting coverage', first ? '#inbox' : '#more/coverage', 'button gold'))],
-  { iconName: 'inbox', tone: 'gold-panel creator-action' });
-  const priority = panel('Project checkpoints', rows(lanes.map(developer => el('div', 'row lane',
-    el('span', 'lane-mark ' + developer.category),
-    el('div', 'row-main', developerLink(developer), el('span', 'row-meta', [labelFor(developer.category), developer.name,
-      developer.priority === 1 ? 'Creator priority' : null, developer.deferred ? 'Deferred per brief' : null].filter(Boolean).join(' · '))),
-    el('div', 'row-side', statusBadge(developer))))),
-  { iconName: 'branch', end: link('All developers', '#developers') });
-  const outcomes = panel('Meaningful development', reports.length ? rows(reports.map(report => row(
+  const nextAction = panel('Needs Your Decision', first ? [
+    el('h3', '', first.action), muted(first.reason), actions(link('Open Creator Inbox', '#inbox', 'button gold')),
+  ] : muted('Verified approval requests appear here when developers report them.'), {
+    iconName: 'inbox', tone: 'gold-panel creator-action',
+    end: first ? badge(String(queue.length), 'gold') : link('Reporting coverage', '#more/coverage'),
+  });
+  const outcomes = panel('Recent Developer Work', reports.length ? rows(reports.map(report => row(
     link(report.completed?.[0] ?? 'Development session', report.source), time(report.reportedAt), badge('Verified report', 'green'))))
     : muted('Waiting for a verified development session report.'), { iconName: 'bolt' });
-  const blockerPanel = panel('Critical blockers', blockers.length ? list(blockers.map(({ developer, blocker }) =>
-    el('span', '', developerLink(developer), ' · ', link(blocker.description, blocker.evidence)))) :
-    muted(blockersKnown ? 'No confirmed blockers in the reports that provided blocker status.' : 'Blocker status is currently unknown.'), { iconName: 'warning' });
-  if (focus) return [hero, cards, el('div', 'main-grid', el('div', 'stack', nextAction, outcomes, blockerPanel),
-    el('div', 'stack', panel('Decisions', queue.length ? list(queue.map(item => link(item.action, '#inbox'))) : muted(decisionsKnown ? 'No outstanding decisions in the reports that provided decision status.' : 'Decision status is currently unknown.')),
-      panel('Development health', fields([['Reporting', `${verified} / ${snapshot.developers.length} verified`],
-        ['Coverage status', freshState(snapshot)]]))))];
-  return [hero, cards, el('div', 'main-grid home-grid', el('div', 'stack', priority, outcomes),
-    el('div', 'stack', nextAction, productionPanel(), blockerPanel))];
+  const notes = creatorNotes().filter(note => !note.archived).length;
+  return [hero, accountFilter(), el('div', 'operations-home',
+    nextAction,
+    focus ? null : el('div', 'team-grid', ['manual', 'codex', 'automatic'].map(category => teamPanel(category, developers))),
+    el('div', 'dashboard-grid', workloadPanel(snapshot, developers), blockersPanel(snapshot, developers)),
+    focus ? outcomes : el('div', 'dashboard-grid',
+      panel('Creator Notes', [
+        muted(`${notes} ${notes === 1 ? 'note' : 'notes'} saved in this browser.`),
+        actions(link('Open Creator Notes', '#more/notes', 'button')),
+      ], { iconName: 'book' }),
+      panel('Reporting Health', [
+        fields([['Verified reports', `${verified} / ${developers.length} assignments`],
+          ['Last usable collection', time(snapshot.health.lastSuccess)],
+          ['Snapshot status', freshState(snapshot)]]),
+        actions(link('View source health', '#more/coverage', 'button')),
+      ], { iconName: 'refresh' })),
+    focus ? null : el('div', 'dashboard-grid', outcomes, productionPanel()))];
 }
 
-function developerIndex() {
-  const filterBar = el('div', 'filters', ...Object.entries({ all: 'All developers', ...categoryName }).map(([category, name]) => {
-    const control = button(name, () => { filter = category; render(); }, 'filter');
-    control.setAttribute('aria-pressed', String(filter === category));
+function developerIndex(category = 'all') {
+  const filterBar = el('div', 'filters', ...Object.entries({ all: 'All developers', ...categoryName }).map(([value, name]) => {
+    const control = link(name, value === 'all' ? '#developers' : `#developers/${value}`, 'button filter');
+    if (value === category) control.setAttribute('aria-current', 'page');
     return control;
   }));
-  const matches = snapshot.developers.filter(item => filter === 'all' || filter === item.category);
-  return [header('Developers', 'Browse assignments and their source evidence.'), filterBar,
-    el('div', 'cards', matches.map(developer => {
-      const report = reportFor(developer);
-      return el('article', 'panel', badge(labelFor(developer.category), categoryTone[developer.category]),
-        developerLink(developer, developer.name, 'card-link'), el('p', '', developer.project),
-        muted(report ? `Latest outcome · ${report.outcome}` : developer.authority), el('div', '', statusBadge(developer)));
-    }))];
+  const available = scopedAssignments();
+  const matches = available.filter(item => category === 'all' || category === item.category);
+  const gaps = category === 'automatic' && accountScope === 'all'
+    ? Math.max(0, automaticSlots - matches.length) : 0;
+  const tiles = matches.map(developer => {
+    const report = reportFor(developer);
+    return el('article', 'panel', badge(labelFor(developer.category), categoryTone[developer.category]),
+      developerLink(developer, developer.name, 'card-link'), el('p', '', developer.project),
+      muted(report ? `Latest outcome · ${report.outcome}` : developer.authority), el('div', '', statusBadge(developer)),
+      developer.category === 'manual' ? actions(continuationButton(developer, report), openConversation(developer)) : null,
+      developer.category === 'manual' && !continuationFor(developer, report) ? muted('Awaiting a verified checkpoint.') : null);
+  });
+  return [header(teamNames[category] ?? 'Developers', category === 'automatic' && accountScope === 'all'
+    ? `${matches.length} known roster entries across ${Math.max(automaticSlots, matches.length)} slots. Individual assignments and schedules await verification.`
+    : 'Browse assignments. Set account labels in developer preferences.'), accountFilter(), filterBar,
+    tiles.length || gaps ? el('div', 'cards', tiles, Array.from({ length: gaps }, (_, index) =>
+      el('article', 'panel empty-slot', el('h2', '', `Roster slot ${matches.length + index + 1}`), muted('Developer and schedule unverified.'))))
+      : muted('No assignments match this account filter.')];
 }
 
 function developerDetail(id) {
@@ -269,8 +372,7 @@ function developerDetail(id) {
   const registeredRoadmap = roadmapProgress(snapshot.reports, developer.assignmentId);
   const dependencies = snapshot.dependencies.filter(edge => edge.assignment === developer.assignmentId);
   const exact = Boolean(report && developer.head && report.commit === developer.head);
-  const continuationControl = button('Continue Development', () => copy(report.continuation, `Checkpoint ${short(report.commit)} copied`), 'primary');
-  continuationControl.disabled = !exact || !report.continuation;
+  const continuationControl = continuationButton(developer, report, true);
   const outcome = report ? `${report.outcome} · ${report.releaseReadiness ?? 'Release readiness unknown'}` : 'No verified report';
   const progress = panel('Progress and next work', [
     fields([['Latest report', report ? time(report.reportedAt) : 'Unknown'], ['Outcome', outcome],
@@ -306,9 +408,9 @@ function developerDetail(id) {
           : report?.pull ? link(`#${report.pull}`, `https://github.com/${report.repository}/pull/${report.pull}`) : 'Unknown'],
         ['Report checkpoint', report ? link(short(report.commit), report.checkpoint ?? report.source) : 'Unknown']]),
       report && !exact ? muted('Checkpoint is stale or the current HEAD is unverified.') : null,
-      actions(continuationControl, developer.pr ? link('View exact-commit checks', '#more/evidence/' + developer.id, 'button') : null),
+      actions(continuationControl, openConversation(developer), developer.pr ? link('View exact-commit checks', '#more/evidence/' + developer.id, 'button') : null),
       exact && report.continuation ? el('details', '', el('summary', '', 'View continuation prompt'), el('p', 'wrap-text', report.continuation)) : null,
-    ], { iconName: 'branch' }), schedule))];
+    ], { iconName: 'branch' }), developerPreferences(developer), schedule))];
 }
 
 function roadmap() {
@@ -486,13 +588,18 @@ function render(navigate = false) {
   }
   document.querySelector('#current-view').textContent = routes.find(([id]) => id === route)[1];
   let content;
-  const moreView = { coverage, activity, releases, evidence, history, directives };
+  const moreView = { coverage, activity, releases, evidence, history, directives,
+    congestion: () => [header('Congestion', 'Workflow runs and developer status with source coverage.'), accountFilter(),
+      workloadPanel(snapshot, scopedAssignments(), { expanded: true })],
+    blockers: () => [header('Blockers', 'Reported blockers and verified release constraints.'), accountFilter(),
+      blockersPanel(snapshot, scopedAssignments(), true)] };
   if (route === 'more' && sub === 'ideas') content = ideasPage(notify);
+  else if (route === 'more' && sub === 'notes') content = creatorNotesPage({ notify, copy });
   else if (route === 'more' && !sub) content = moreIndex();
   else if (!snapshot) content = [header('Development evidence unavailable', 'Load the published snapshot to view developer assignments and progress.'),
     panel('Snapshot status', [muted(loadError ? 'No validated snapshot is available on this device.' : 'Loading the latest published snapshot.'),
       actions(button('Retry snapshot', () => load(true)))])];
-  else if (route === 'developers') content = sub ? developerDetail(sub) : developerIndex();
+  else if (route === 'developers') content = !sub || Object.hasOwn(categoryName, sub) ? developerIndex(sub) : developerDetail(sub);
   else if (route === 'roadmap') content = roadmap();
   else if (route === 'inbox') content = inbox();
   else if (route === 'more') content = Object.hasOwn(moreView, sub) ? moreView[sub](detail) : moreIndex();

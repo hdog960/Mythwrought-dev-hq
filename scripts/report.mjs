@@ -1,4 +1,4 @@
-import { APPROVAL_TYPES, BLOCKER_TYPES, CATEGORIES, OUTCOMES, READINESS, REPO, isISO, isId,
+import { APPROVAL_TYPES, BLOCKER_TYPES, CATEGORIES, EXECUTION_STATES, OUTCOMES, READINESS, REPO, isISO, isId,
   isRecord, isSha, sourceLink } from '../src/model.mjs';
 
 const MAX_REPORT_BYTES = 16_384;
@@ -72,6 +72,9 @@ export const fields = {
   branch: value => typeof value === 'string' && /^[A-Za-z0-9][-.\w/]{0,159}$/.test(value) && !value.includes('..'),
   commit: isSha, pull: optional(value => count(value) && value > 0), issue: optional(value => count(value) && value > 0),
   checkpoint: optional(link),
+  execution: optional(value => contract(value, {
+    state: oneOf(EXECUTION_STATES), observedAt: isISO, evidence: link,
+  })),
   outcome: oneOf(OUTCOMES), completed: optional(list(value => requiredText(value, 400), 20)),
   milestone: optional(isId), roadmapRevision: optional(isId), roadmap: optional(roadmap), newlyCompleted: optional(list(isId)), quantitative: optional(list(quantity)),
   remaining: optional(list(value => requiredText(value, 400), 20)), estimate: optional(estimate),
@@ -92,6 +95,7 @@ export function parseReport(body, assignment, registeredSource, comment) {
       payload.category !== assignment.category || payload.repository.toLowerCase() !== assignment.repository.toLowerCase() ||
       (assignment.pr !== null && payload.pull !== assignment.pr) || (assignment.branch && payload.branch !== assignment.branch) ||
       !isISO(comment.createdAt) || Date.parse(payload.reportedAt) > Date.parse(comment.createdAt) + 5 * 60_000) return null;
+  if (payload.execution && Date.parse(payload.execution.observedAt) > Date.parse(payload.reportedAt)) return null;
   if (payload.roadmap && payload.roadmapRevision && payload.roadmap.revision !== payload.roadmapRevision) return null;
   if ((payload.decisions ?? []).some(item => item.state !== 'requested' &&
       !registeredSource.creatorAuthorizationPublishers?.includes(comment.publisher))) return null;

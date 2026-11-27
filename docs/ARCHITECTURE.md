@@ -28,6 +28,14 @@ Public report ingestion binds a versioned allowlisted report to a registered rep
 
 The static frontend requests one snapshot on launch and while foregrounded. The service worker caches the content-derived shell under the repository scope. The app caches only a validated snapshot. Offline and old data are labeled. The Idea Vault and preferences use local browser storage and stay across shell updates. JSON export is the backup and transfer mechanism.
 
+## Operations overview
+
+The home screen groups manual, Codex, and automatic assignments. The automatic roster includes the creator's 15 planned slots and only gives identities to entries with a registered source. All, Personal, Business, and Unclassified views use creator labels stored in the device's browser. A saved manual developer conversation shortcut is local to that browser. Continue Development copies the current verified continuation text for the exact known HEAD. Open Conversation opens the locally configured ChatGPT link.
+
+Congestion displays GitHub's repository-wide workflow run totals and a bounded list of run details for each status. Developer execution comes from authenticated reports, with unknown or stale coverage marked explicitly. Related GitHub runs match the verified assignment branch and commit. Reported work blockers and verified release constraints have separate labels.
+
+Creator Notes supports browser-local editing, archiving, copying, and Markdown export. The optional private ChatGPT Page shortcut is stored on the device. Notes added on the private Page can be referenced in a chat that has access. The public build and collector have no note or private shortcut inputs.
+
 ## GitHub Pages operation
 
 Public repository metadata and the existing successful deployment confirm that Pages is enabled. During repository discovery the site served the initial README. An authenticated check confirmed the initial Pages source was main at the repository root using branch-based publishing.

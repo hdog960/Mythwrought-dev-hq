@@ -30,6 +30,7 @@ const sourceNames = { branches: 'Game main reference', pulls: 'Pull requests', i
   releases: 'GitHub releases', deployments: 'Pages deployments', production: 'Public release identity',
   directives: 'Creator directives', 'workflowLoad:queued': 'Queued workflows',
   'workflowLoad:in_progress': 'Running workflows', 'workflowLoad:waiting': 'Waiting workflows', registeredBranches: 'Registered branch HEADs', checks: 'Exact-commit checks', reports: 'Developer reports' };
+const skipLink = document.querySelector('.skip-link');
 const nav = document.querySelector('#navigation');
 const main = document.querySelector('#main');
 const health = document.querySelector('#health');
@@ -55,6 +56,11 @@ for (const [id, name, pictogram] of routes) {
   item.dataset.route = id;
   nav.append(item);
 }
+skipLink.addEventListener('click', event => {
+  event.preventDefault();
+  main.focus({ preventScroll: true });
+  main.scrollIntoView({ block: 'start' });
+});
 refresh.append(icon('refresh'));
 refresh.addEventListener('click', () => load(true));
 window.addEventListener('hashchange', () => {
@@ -104,7 +110,7 @@ function renderStatus() {
 async function load(manual = false) {
   if (loading) return;
   loading = true;
-  refresh.disabled = true;
+  refresh.setAttribute('aria-disabled', 'true');
   renderStatus();
   const former = snapshot;
   const priorError = loadError;
@@ -137,7 +143,7 @@ async function load(manual = false) {
     if (manual) notify(cached ? 'Using last validated snapshot' : 'Published snapshot unavailable');
   } finally {
     loading = false;
-    refresh.disabled = false;
+    refresh.removeAttribute('aria-disabled');
     renderStatus();
     const editingLocal = activePath === 'more/ideas' || activePath === 'more/notes' ||
       Boolean(main.querySelector('form[data-preferences-dirty]'));
@@ -305,7 +311,9 @@ function home() {
     focus = !focus;
     saveLocal('focus', focus);
     render();
+    document.querySelector('#focus-mode')?.focus({ preventScroll: true });
   });
+  focusButton.id = 'focus-mode';
   focusButton.prepend(icon('focus'));
   const logo = el('img');
   Object.assign(logo, { src: './assets/icon-512.png', alt: '' });

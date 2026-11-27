@@ -36,6 +36,10 @@ Congestion displays GitHub's repository-wide workflow run totals and a bounded l
 
 Creator Notes supports browser-local editing, archiving, copying, and Markdown export. The optional private ChatGPT Page shortcut is stored on the device. Notes added on the private Page can be referenced in a chat that has access. The public build and collector have no note or private shortcut inputs.
 
+## Desktop browser checks
+
+After collecting a snapshot, build and serve HQ locally. Run `python tests/desktop-smoke.py --browser chromium` or `--browser firefox` with Python Playwright and that browser available. The checks cover keyboard focus, short desktop windows, the effective screen widths of laptop zoom, and an offline reload. An installed Chromium executable can be supplied with `--executable`.
+
 ## GitHub Pages operation
 
 Public repository metadata and the existing successful deployment confirm that Pages is enabled. During repository discovery the site served the initial README. An authenticated check confirmed the initial Pages source was main at the repository root using branch-based publishing.

@@ -34,10 +34,10 @@ small { font-size: .84rem; }
 img { max-width: 100%; }
 strong, a, code, .break { overflow-wrap: anywhere; }
 code { color: #dec9ff; font-size: .82rem; }
-.skip-link { position: fixed; transform: translateY(-150%); z-index: 20; background: #251a3e; padding: 12px; }
+.skip-link { position: fixed; top: 0; left: 0; transform: translateY(-150%); z-index: 20; background: #251a3e; padding: 12px; }
 .skip-link:focus { transform: translateY(0); }
 .app-shell { display: grid; grid-template-columns: 224px minmax(0, 1fr); min-height: 100svh; }
-.rail { position: sticky; top: 0; display: flex; flex-direction: column; padding: 25px 17px; height: 100svh; background: #100e19; border-right: 1px solid #262035; }
+.rail { position: sticky; top: 0; display: flex; flex-direction: column; padding: 25px 17px; height: 100svh; overflow-y: auto; overscroll-behavior: contain; background: #100e19; border-right: 1px solid #262035; }
 .brand { display: flex; gap: 10px; align-items: center; color: #f6efff; text-decoration: none; padding: 0 4px; }
 .brand img { border-radius: 12px; }
 .brand strong { display: block; font-size: 1.03rem; letter-spacing: -.03em; white-space: nowrap; }
@@ -63,6 +63,7 @@ code { color: #dec9ff; font-size: .82rem; }
 .badge.purple { color: var(--purple); border-color: #54416f; background: #302141; }
 .icon-button, .button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 44px; border: 1px solid #413756; border-radius: 9px; padding: 8px 13px; background: #242036; text-decoration: none; color: #f1e8ff; font-weight: 660; font-size: .9rem; text-align: center; }
 .icon-button { width: 44px; flex: none; padding: 0; }
+.icon-button[aria-disabled=true] { cursor: progress; opacity: .65; }
 :is(.button, .icon-button):hover { background: #352a4c; color: #fff; }
 .button.primary { background: #d6baff; border-color: #d6baff; color: #221434; }
 .button.primary:hover { background: #e8d6ff; }
@@ -146,7 +147,7 @@ textarea { resize: vertical; }
 }
 @media (max-width: 740px), (hover: none) and (max-height: 510px) {
   .app-shell { display: block; }
-  .rail { position: static; padding: 8px max(14px, env(safe-area-inset-right)) 8px max(14px, env(safe-area-inset-left)); height: auto; border: 0; border-bottom: 1px solid #262035; }
+  .rail { position: static; padding: 8px max(14px, env(safe-area-inset-right)) 8px max(14px, env(safe-area-inset-left)); height: auto; overflow: visible; overscroll-behavior: auto; border: 0; border-bottom: 1px solid #262035; }
   .brand img { width: 36px; height: 36px; }
   .brand small { font-size: .75rem; }
   #navigation { position: fixed; z-index: 12; bottom: 0; left: 0; right: 0; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 2px; margin: 0; padding: 5px max(7px, env(safe-area-inset-right)) max(5px, env(safe-area-inset-bottom)) max(7px, env(safe-area-inset-left)); background: #120e1e; border-top: 1px solid #3c2d53; }

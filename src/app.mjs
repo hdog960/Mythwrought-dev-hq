@@ -164,7 +164,9 @@ function setupWorker() {
 const developerLink = (developer, label = developer.project, klass) => link(label, '#developers/' + developer.id, klass);
 const reportFor = developer => latestFor(snapshot.reports, developer.assignmentId);
 const verifiedCount = () => snapshot.developers.filter(reportFor).length;
-const reportStatus = developer => reportFor(developer) ? 'Report connected' : developer.status;
+const coverageOf = field => snapshot.developers.filter(developer => Array.isArray(reportFor(developer)?.[field])).length;
+const reportStatus = developer => developer.status !== 'Unknown' ? developer.status
+  : reportFor(developer) ? 'Report connected' : developer.status;
 const statusBadge = developer => badge(reportStatus(developer), statusTone[reportStatus(developer)]);
 const labelFor = category => categoryName[category] ?? category;
 
@@ -188,6 +190,9 @@ function home() {
   const queue = approvalQueue(snapshot);
   const pressure = congestion(snapshot);
   const verified = verifiedCount();
+  const total = snapshot.developers.length;
+  const decisionsKnown = coverageOf('decisions');
+  const blockersKnown = coverageOf('blockers');
   const first = queue[0];
   const blockers = snapshot.developers.flatMap(developer => (reportFor(developer)?.blockers ?? [])
     .filter(item => !['CI waiting', 'deferral'].includes(item.category)).map(blocker => ({ developer, blocker })));
@@ -206,9 +211,11 @@ function home() {
       el('p', '', 'See project status, creator decisions, and release evidence for Mythwrought.'),
       actions(focusButton)), el('div', 'hero-emblem', logo));
   const cards = el('div', 'stats',
-    stat('Developer roster', String(snapshot.developers.length), `${verified} sources with verified reports`, 'users'),
-    stat('Creator decisions', verified ? String(queue.length) : 'Unknown', 'Current verified requests', 'inbox'),
-    stat('Reported blockers', verified ? String(new Set(blockers.map(entry => entry.blocker.id)).size) : 'Unknown', 'Across reporting assignments', 'warning'),
+    stat('Developer roster', String(total), `${verified} ${verified === 1 ? 'source' : 'sources'} with verified reports`, 'users'),
+    stat('Creator decisions', queue.length || decisionsKnown ? String(queue.length) : 'Unknown',
+      decisionsKnown ? `${decisionsKnown} / ${total} report decision status` : 'Awaiting decision status', 'inbox'),
+    stat('Reported blockers', blockersKnown ? String(new Set(blockers.map(entry => entry.blocker.id)).size) : 'Unknown',
+      blockersKnown ? `${blockersKnown} / ${total} report blocker status` : 'Awaiting blocker status', 'warning'),
     stat('Congestion', pressure.score === null ? 'Unknown' : String(pressure.score), pressure.coverage ?
       `${pressure.coverage}% evidence coverage` : 'Coverage needed for a score', 'signal'));
   const nextAction = panel('Creator action', [el('h3', '', first?.action ??
@@ -227,9 +234,9 @@ function home() {
     : muted('Waiting for a verified development session report.'), { iconName: 'bolt' });
   const blockerPanel = panel('Critical blockers', blockers.length ? list(blockers.map(({ developer, blocker }) =>
     el('span', '', developerLink(developer), ' · ', link(blocker.description, blocker.evidence)))) :
-    muted(verified ? 'No confirmed blockers in the latest available reports.' : 'Unknown until developer reports are available.'), { iconName: 'warning' });
+    muted(blockersKnown ? 'No confirmed blockers in the reports that provided blocker status.' : 'Blocker status is currently unknown.'), { iconName: 'warning' });
   if (focus) return [hero, cards, el('div', 'main-grid', el('div', 'stack', nextAction, outcomes, blockerPanel),
-    el('div', 'stack', panel('Decisions', queue.length ? list(queue.map(item => link(item.action, '#inbox'))) : muted('No verified decisions in the available reports.')),
+    el('div', 'stack', panel('Decisions', queue.length ? list(queue.map(item => link(item.action, '#inbox'))) : muted(decisionsKnown ? 'No outstanding decisions in the reports that provided decision status.' : 'Decision status is currently unknown.')),
       panel('Development health', fields([['Reporting', `${verified} / ${snapshot.developers.length} verified`],
         ['Coverage status', freshState(snapshot)]]))))];
   return [hero, cards, el('div', 'main-grid home-grid', el('div', 'stack', priority, outcomes),
@@ -295,7 +302,8 @@ function developerDetail(id) {
       fields([['Priority', developer.priority === 1 ? 'Creator priority' : developer.deferred ? 'Deferred per brief' : developer.status === 'Deferred per brief' ? developer.status : null],
         ['Assignment source', developer.source ? link(developer.authority, developer.source) : developer.authority],
         ['Repository', developer.repository], ['Branch', developer.branch], ['Verified HEAD', developer.head ? el('code', '', developer.head) : 'Unknown'],
-        ['Pull request', candidate ? link(`#${candidate.number} · ${candidate.draft ? 'Draft' : candidate.state}`, candidate.source) : 'Unknown'],
+        ['Pull request', candidate ? link(`#${candidate.number} · ${candidate.draft ? 'Draft' : candidate.state}`, candidate.source)
+          : report?.pull ? link(`#${report.pull}`, `https://github.com/${report.repository}/pull/${report.pull}`) : 'Unknown'],
         ['Report checkpoint', report ? link(short(report.commit), report.checkpoint ?? report.source) : 'Unknown']]),
       report && !exact ? muted('Checkpoint is stale or the current HEAD is unverified.') : null,
       actions(continuationControl, developer.pr ? link('View exact-commit checks', '#more/evidence/' + developer.id, 'button') : null),
@@ -345,7 +353,7 @@ function inbox() {
   });
   return [header('Creator Inbox', 'Review requests here and authorize them through their registered GitHub workflow.'),
     el('div', 'stack', cards.length ? cards : panel('Decision requests',
-      muted(verifiedCount() ? 'No outstanding decisions in the available reports.' : 'No reporting source has submitted a verified request yet.'),
+      muted(coverageOf('decisions') ? 'No outstanding decisions in the reports that provided decision status.' : 'Decision status is currently unknown.'),
     { iconName: 'inbox', end: link('Reporting coverage', '#more/coverage') }))];
 }
 

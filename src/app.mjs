@@ -1,5 +1,6 @@
-import { approvalQueue, cyclesIn, estimateFor, freshState, isSnapshot, latestFor } from './model.mjs';
+import { approvalQueue, cyclesIn, freshState, isSnapshot, latestFor } from './model.mjs';
 import { actions, badge, button, el, fields, header, icon, link, list, muted, panel, readLocal, row, rows, saveLocal, short, time } from './ui.mjs';
+import { remainingSessions, roadmapProgress } from './estimates.mjs';
 import { ideasPage } from './ideas.mjs';
 import { congestion, summarize } from './insights.mjs';
 
@@ -257,7 +258,8 @@ function developerDetail(id) {
   const reports = snapshot.reports.filter(item => item.assignmentId === developer.assignmentId).slice().reverse();
   const report = reportFor(developer);
   const candidate = snapshot.pulls.find(pr => pr.number === developer.pr);
-  const estimate = estimateFor(report);
+  const estimate = remainingSessions(snapshot.reports, developer.assignmentId);
+  const registeredRoadmap = roadmapProgress(snapshot.reports, developer.assignmentId);
   const dependencies = snapshot.dependencies.filter(edge => edge.assignment === developer.assignmentId);
   const exact = Boolean(report && developer.head && report.commit === developer.head);
   const continuationControl = button('Continue Development', () => copy(report.continuation, `Checkpoint ${short(report.commit)} copied`), 'primary');
@@ -269,8 +271,11 @@ function developerDetail(id) {
       ['Optimistic sessions', estimate ? String(estimate.optimistic) : 'Unknown'],
       ['Likely sessions', estimate ? String(estimate.likely) : 'Unknown'],
       ['Conservative sessions', estimate ? String(estimate.conservative) : 'Unknown'],
-      ['Estimate confidence', estimate?.confidence]]),
-    estimate && muted(estimate.rationale), el('h3', '', 'Completed work'), list(report?.completed),
+      ['Estimate confidence', estimate?.confidence], ['Estimate source', estimate?.method]]),
+    estimate && muted(estimate.rationale),
+    registeredRoadmap ? el('details', '', el('summary', '', 'Roadmap revision ' + registeredRoadmap.revision),
+      list(registeredRoadmap.milestones.map(item => `${item.label} · ${item.complete ? 'Complete' : 'Planned'} · ${item.kind}`))) : null,
+    el('h3', '', 'Completed work'), list(report?.completed),
     el('h3', '', 'Remaining work'), list(report?.remaining),
     el('h3', '', 'Content progress'), list(report?.quantitative?.map(item =>
       `${item.amount}${item.target === null ? '' : ` / ${item.target}`} ${item.unit} · ${item.state}`)),

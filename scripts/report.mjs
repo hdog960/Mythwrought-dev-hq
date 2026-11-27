@@ -57,6 +57,14 @@ const quantity = value => contract(value, {
   amount: count, target: optional(count),
 });
 
+const milestone = value => contract(value, {
+  id: isId, label: text => requiredText(text, 160), effort: value => duration(value) && value >= .1,
+  kind: oneOf(['development', 'qualification']), complete: value => typeof value === 'boolean',
+});
+const roadmap = value => contract(value, {
+  revision: isId, milestones: list(milestone, 60),
+}) && value.milestones.length > 0 && new Set(value.milestones.map(item => item.id)).size === value.milestones.length;
+
 export const fields = {
   schemaVersion: value => value === 1, publish: value => value === true, reportId: isId,
   developerId: isId, assignmentId: isId, category: oneOf(CATEGORIES), sessionId: isId, reportedAt: isISO,
@@ -65,7 +73,7 @@ export const fields = {
   commit: isSha, pull: optional(value => count(value) && value > 0), issue: optional(value => count(value) && value > 0),
   checkpoint: optional(link),
   outcome: oneOf(OUTCOMES), completed: optional(list(value => requiredText(value, 400), 20)),
-  milestone: optional(isId), newlyCompleted: optional(list(isId)), quantitative: optional(list(quantity)),
+  milestone: optional(isId), roadmapRevision: optional(isId), roadmap: optional(roadmap), newlyCompleted: optional(list(isId)), quantitative: optional(list(quantity)),
   remaining: optional(list(value => requiredText(value, 400), 20)), estimate: optional(estimate),
   blockers: optional(list(blocker)), dependencyIds: optional(list(isId)),
   qualification: optional(list(evidence)), reusableEvidence: optional(list(evidence)),
@@ -84,6 +92,7 @@ export function parseReport(body, assignment, registeredSource, comment) {
       payload.category !== assignment.category || payload.repository.toLowerCase() !== assignment.repository.toLowerCase() ||
       (assignment.pr !== null && payload.pull !== assignment.pr) || (assignment.branch && payload.branch !== assignment.branch) ||
       !isISO(comment.createdAt) || Date.parse(payload.reportedAt) > Date.parse(comment.createdAt) + 5 * 60_000) return null;
+  if (payload.roadmap && payload.roadmapRevision && payload.roadmap.revision !== payload.roadmapRevision) return null;
   if ((payload.decisions ?? []).some(item => item.state !== 'requested' &&
       !registeredSource.creatorAuthorizationPublishers?.includes(comment.publisher))) return null;
   const source = sourceLink(comment.url);

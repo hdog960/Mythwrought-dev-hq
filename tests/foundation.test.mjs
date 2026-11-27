@@ -162,3 +162,32 @@ test('Congestion grows with evidence, excludes deferral, and history deduplicate
   assert.equal(summarize(snapshot, 1).milestones, 1);
   assert.equal(summarize(snapshot, 1, Date.parse(instant) - 1).reports.length, 0);
 });
+
+test('A revision-backed estimate reflects throughput, additional scope, and verified completion', async () => {
+  const { remainingSessions, roadmapProgress } = await import('../src/estimates.mjs');
+  const milestone = (id, effort, complete = false, kind = 'development') => ({ id, label: id, effort, complete, kind });
+  const plan = [milestone('a', 2), milestone('b', 4), milestone('c', 6), milestone('d', 12)];
+  const make = (id, index, data) => parseReport(markdown({
+    reportId: id, sessionId: `work-${index}`, reportedAt: `2026-11-27T${String(10 + index).padStart(2, '0')}:00:00Z`, ...data,
+  }), developer, source, comment);
+  const reports = [
+    make('r1', 1, { roadmap: { revision: 'r1', milestones: plan }, newlyCompleted: ['a'] }),
+    make('r2', 2, { roadmapRevision: 'r1', newlyCompleted: ['b'] }),
+    make('r3', 3, { roadmapRevision: 'r1', newlyCompleted: ['c'] }),
+  ];
+  assert.ok(reports.every(Boolean));
+  assert.equal(remainingSessions(reports.slice(0, 2), developer.assignmentId), null);
+  const baseline = remainingSessions(reports, developer.assignmentId);
+  assert.deepEqual([baseline.optimistic, baseline.likely, baseline.conservative], [3, 3, 4]);
+  reports.push(make('r4', 4, { outcome: 'administration', roadmap: {
+    revision: 'r2', milestones: [...plan.map((item, index) => ({ ...item, complete: index < 3 })), milestone('e', 8)],
+  } }));
+  assert.equal(roadmapProgress(reports, developer.assignmentId).revision, 'r2');
+  const expanded = remainingSessions(reports, developer.assignmentId);
+  assert.deepEqual([expanded.optimistic, expanded.likely, expanded.conservative], [4, 5, 7]);
+  reports.push(make('r5', 5, { roadmapRevision: 'r2', newlyCompleted: ['d', 'e'], releaseReadiness: 'merged' }));
+  assert.equal(remainingSessions(reports, developer.assignmentId), null);
+  reports.push(make('r6', 6, { roadmapRevision: 'r2', releaseReadiness: 'fully accepted', outcome: 'administration' }));
+  assert.equal(remainingSessions(reports, developer.assignmentId).likely, 0);
+  assert.equal(make('wrong-revision', 1, { roadmapRevision: 'r2', roadmap: { revision: 'r1', milestones: plan } }), null);
+});

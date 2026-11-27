@@ -49,6 +49,10 @@ export function isSnapshot(data) {
       isISO(item.reportedAt) && isSha(item.commit) && OUTCOMES.includes(item.outcome) &&
       nullable(item.completed, value => Array.isArray(value) && value.every(text)) &&
       nullable(item.remaining, value => Array.isArray(value) && value.every(text)) &&
+      nullable(item.roadmap, value => isRecord(value) && isId(value.revision) && records(value.milestones) &&
+        value.milestones.every(milestone => isId(milestone.id) && text(milestone.label) &&
+          typeof milestone.effort === 'number' && Number.isFinite(milestone.effort) && milestone.effort > 0 &&
+          ['development', 'qualification'].includes(milestone.kind) && typeof milestone.complete === 'boolean')) &&
       nullable(item.newlyCompleted, value => Array.isArray(value) && value.every(isId)) &&
       ['blockers', 'decisions', 'quantitative', 'qualification', 'reusableEvidence'].every(key => nullable(item[key], records))) &&
     data.pulls.every(item => positive(item.number) && isSha(item.head) && text(item.title)) &&

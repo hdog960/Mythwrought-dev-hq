@@ -62,7 +62,10 @@ skipLink.addEventListener('click', event => {
   main.scrollIntoView({ block: 'start' });
 });
 refresh.append(icon('refresh'));
-refresh.addEventListener('click', () => load(true));
+refresh.addEventListener('click', () => {
+  load(true);
+  checkUpdates();
+});
 window.addEventListener('hashchange', () => {
   if (location.hash === '#main') return;
   render(true);
@@ -107,6 +110,22 @@ function renderStatus() {
   }
 }
 
+async function savedSnapshot() {
+  try {
+    const response = await (await caches.open(dataCache)).match(dataURL);
+    const data = await response?.json();
+    return isSnapshot(data) ? data : null;
+  } catch {
+    return null;
+  }
+}
+
+function newestSnapshot(first, second) {
+  if (!first) return second;
+  if (!second) return first;
+  return Date.parse(first.generatedAt) >= Date.parse(second.generatedAt) ? first : second;
+}
+
 async function load(manual = false) {
   if (loading) return;
   loading = true;
@@ -122,22 +141,19 @@ async function load(manual = false) {
     if (body.length > 8_000_000) throw new Error('Snapshot exceeds size limit');
     const next = JSON.parse(body);
     if (!isSnapshot(next)) throw new Error('Invalid snapshot');
-    if (!snapshot || next.generatedAt >= snapshot.generatedAt) {
-      snapshot = next;
-      cached = false;
+    const best = newestSnapshot(next, newestSnapshot(snapshot, await savedSnapshot()));
+    snapshot = best;
+    cached = best !== next;
+    if (!cached) {
       try {
         const cache = await caches.open(dataCache);
         await cache.put(dataURL, new Response(body, { headers: { 'Content-Type': 'application/json' } }));
       } catch { /* The valid in-memory snapshot remains available. */ }
     }
     loadError = false;
-    if (manual) notify('Published snapshot checked');
+    if (manual) notify(cached ? 'Using last validated snapshot' : 'Published snapshot checked');
   } catch {
-    try {
-      const response = await (await caches.open(dataCache)).match(dataURL);
-      const data = await response?.json();
-      if (isSnapshot(data) && (!snapshot || data.generatedAt >= snapshot.generatedAt)) snapshot = data;
-    } catch { /* Cache unavailable. */ }
+    snapshot = newestSnapshot(snapshot, await savedSnapshot());
     cached = Boolean(snapshot);
     loadError = true;
     if (manual) notify(cached ? 'Using last validated snapshot' : 'Published snapshot unavailable');

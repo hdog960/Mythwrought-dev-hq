@@ -93,12 +93,14 @@ export const registry = [
   assignment('skills', 'manual', 'Skill Developer', 'Path of Mastery', {
     authority: 'Creator assignment #512', branch: 'dev/path-of-mastery-pm0-pm2-20261127', pr: 515,
     source: git(game, '/issues/512'), ownershipSource: skillOwnership,
+    scopePaths: /^(?:src\/path-of-mastery\/|docs\/path-of-mastery\/|tests\/path-of-mastery[^/]*\.test\.mjs$)/,
     checkpointSource: { directory: 'docs/path-of-mastery', pattern: /^SESSION_(\d+)\.md$/ },
     reportSources: [ownerReport(game, 515)],
   }),
   assignment('combat', 'manual', 'Combat Developer', 'Age of Valor', {
     authority: 'Creator assignment #513', branch: 'dev/age-of-valor-av0-av1-20261127', pr: 514,
     source: git(game, '/issues/513'), ownershipSource: combatOwnership,
+    scopePaths: /^(?:src\/age-of-valor\/|docs\/age-of-valor\/|tests\/age-of-valor[^/]*\.test\.mjs$)/,
     checkpointSource: { directory: 'docs/age-of-valor', pattern: /^AV\d+(?:_AV\d+)?_SESSION_(\d+)\.md$/ },
     reportSources: [ownerReport(game, 514)],
   }),

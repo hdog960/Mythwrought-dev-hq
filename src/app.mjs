@@ -1,13 +1,15 @@
-import { approvalQueue, cyclesIn, freshState, isSnapshot, latestFor } from './model.mjs';
+import { approvalQueue, freshState, isSnapshot, latestFor } from './model.mjs';
 import { actions, badge, button, el, fields, header, icon, link, list, muted, panel, readLocal, row, rows, saveLocal, short, time } from './ui.mjs';
 import { remainingSessions, roadmapProgress } from './estimates.mjs';
 import { ideasPage } from './ideas.mjs';
-import { congestion, summarize } from './insights.mjs';
-import { accountLabels, accountOf, assignmentStatus, automaticSlots, continuationFor, conversationURL, nextScheduledRun, scopedDevelopers } from './operations.mjs';
+import { congestion, studioTimeline, summarize } from './insights.mjs';
+import { accountLabels, accountOf, assignmentStatus, automaticSlots, continuationFor, conversationURL, scopedDevelopers } from './operations.mjs';
 import { blockersPanel, workloadPanel } from './dashboard.mjs';
 import { creatorNotes, creatorNotesPage } from './creator-notes.mjs';
 import { actionGroups, creatorActions } from './command-center.mjs';
 import { releaseOverview } from './releases.mjs';
+import { masterRoadmap } from './roadmap.mjs';
+import { automationOverview, efficiencySignals } from './automation.mjs';
 
 const routes = [
   ['home', 'Home', 'home'], ['developers', 'Developers', 'users'], ['roadmap', 'Roadmap', 'map'],
@@ -18,6 +20,8 @@ const moreRoutes = [
   ['congestion', 'Congestion', 'PR reviews, required gates, dependencies, and checkpoint coverage'],
   ['blockers', 'Blockers', 'Reported impediments and release constraints'],
   ['coverage', 'Reporting coverage', 'Source freshness, synchronization, and onboarding'],
+  ['automations', 'Automation oversight', 'Scheduler evidence, recent output, and blockers'],
+  ['efficiency', 'Development efficiency', 'Repeated blockers and qualification evidence'],
   ['activity', 'GitHub activity', 'Open PRs, recently closed PRs, workflows, and issues'],
   ['releases', 'Release center', 'Public production identity and GitHub deployment history'],
   ['evidence', 'Evidence vault', 'Exact-commit checks and reported qualification'],
@@ -29,7 +33,7 @@ const categoryName = { manual: 'Manual', automatic: 'Automatic', codex: 'Codex' 
 const categoryTone = { manual: 'blue', automatic: 'green', codex: 'purple' };
 const sourceNames = { branches: 'Game main reference', pulls: 'Pull requests', issues: 'Issues', workflows: 'Workflows',
   releases: 'GitHub releases', deployments: 'Pages deployments', production: 'Public release identity', publication: 'Public HTML and deployment match',
-  releaseRecords: 'Creator release records', schedule: 'HQ scheduled sync runs',
+  releaseRecords: 'Creator release records', changeScope: 'Approved file scope comparisons', schedule: 'HQ scheduled sync runs',
   directives: 'Creator directives', checkpoints: 'Public checkpoints', ownership: 'Creator ownership issues', reviews: 'PR review requests',
   'workflowLoad:queued': 'Queued workflows',
   'workflowLoad:in_progress': 'Running workflows', 'workflowLoad:waiting': 'Waiting workflows', registeredBranches: 'Registered branch HEADs', checks: 'Exact-commit checks', reports: 'Developer reports' };
@@ -316,7 +320,8 @@ function teamPanel(category, developers) {
         category === 'codex' && report?.milestone ? el('span', '', `Milestone · ${report.milestone}`) : null,
       ]);
     })) : muted('No assignments match this account filter.'),
-    actions(link(`View all ${category} developers`, `#developers/${category}`, 'button')),
+    actions(link(`View all ${category} developers`, `#developers/${category}`, 'button'),
+      category === 'automatic' ? link('Automation oversight', '#more/automations', 'button') : null),
   ], { iconName: category === 'automatic' ? 'bolt' : 'users', end: count, tone: 'team-card ' + category });
 }
 
@@ -441,19 +446,20 @@ function developerDetail(id) {
       `${item.amount}${item.target === null ? '' : ` / ${item.target}`} ${item.unit} · ${item.state}`)),
   ], { iconName: 'map' });
   const recorded = developer.lastSchedulerResult;
+  const expected = automationOverview(snapshot, [developer])[0]?.next;
   const schedule = developer.category === 'automatic' ? panel('Automation reporting', [
     fields([['Hourly slot', developer.minute === null ? 'Unknown' : `:${String(developer.minute).padStart(2, '0')}${developer.scheduleObservedAt ? '' : ' · creator brief'}`],
       ['Schedule timezone', developer.timezone],
       ['Configuration when checked', developer.scheduleEnabled == null ? 'Unknown' : developer.scheduleEnabled ? 'Enabled' : 'Paused'],
       ['Schedule verified', developer.scheduleObservedAt ? time(developer.scheduleObservedAt) : 'Unknown'],
-      ['Next scheduled occurrence', developer.scheduleEnabled === false ? 'Paused' : time(nextScheduledRun(developer))],
+      ['Next scheduled occurrence', expected ? time(expected) : 'Unavailable'],
       ['Last recorded run completion', time(recorded?.completedAt)],
       ['Scheduler result checked', time(recorded?.observedAt)],
       ['Creator action on last result', recorded ? (recorded.needsCreatorAction ? 'Requested' : 'None reported') : 'Unknown'],
       ['Public output linked to last result', recorded?.publicOutput ? link('Open commit', recorded.publicOutput) : 'Unknown'],
       ['Last verified developer report', report && time(report.reportedAt)],
       ['Reported run state', report?.execution ? `${report.execution.state} · observed` : 'Unknown']]),
-    developer.scheduleEnabled === true ? muted('The next occurrence is calculated from the last verified schedule.') : null,
+    expected ? muted('The next occurrence is calculated from the last verified schedule.') : null,
   ], { iconName: 'signal' }) : null;
   return [header(developer.name, developer.project, actions(link('All developers', '#developers', 'button'), statusBadge(developer))),
     el('div', 'main-grid', el('div', 'stack', progress, panel('Blockers and dependencies', [
@@ -482,27 +488,46 @@ function developerDetail(id) {
 }
 
 function roadmap() {
-  const cycles = cyclesIn(snapshot.dependencies);
+  const overview = masterRoadmap(snapshot, scopedAssignments());
+  const releases = new Map(releaseOverview(snapshot).candidates.map(item => [item.developer.assignmentId, item]));
+  const label = id => snapshot.developers.find(item => item.assignmentId === id)?.project ?? id;
   const proposals = readLocal('ideas-v1', []);
   const localProposals = Array.isArray(proposals) ? proposals.filter(item => item?.proposal && !item.archived) : [];
-  return [header('Roadmap', 'Project priorities, reported milestones, and release dependencies.'),
-    el('div', 'main-grid', panel('Development programs', rows(snapshot.developers.map(developer => {
-      const latest = reportFor(developer);
-      const completed = [...new Set(snapshot.reports.filter(item => item.assignmentId === developer.assignmentId)
-        .flatMap(item => item.newlyCompleted ?? []))];
-      return row(developerLink(developer), [labelFor(developer.category),
-        latest?.milestone ? ' · ' + latest.milestone : ' · Milestone unknown',
-        completed.length ? ' · ' + completed.join(', ') : ''], statusBadge(developer));
-    })), { iconName: 'map' }),
-    el('div', 'stack', panel('Release dependencies', [
-      list(snapshot.dependencies.map(edge => {
-        const project = snapshot.developers.find(developer => developer.assignmentId === edge.assignment);
-        const prerequisite = snapshot.developers.find(developer => developer.assignmentId === edge.prerequisite);
-        return link(`${project?.project ?? edge.assignment} depends on ${prerequisite?.project ?? edge.prerequisite} · ${edge.state}`, edge.source);
-      }), 'No registered dependencies'),
-      cycles.length ? list(cycles.map(cycle => 'Circular dependency · ' + cycle)) : null,
-    ], { iconName: 'branch' }),
-    panel('Local proposals', list(localProposals.map(item => String(item.title)), 'No local proposals'), { end: link('Idea Vault', '#more/ideas') })))];
+  const critical = overview.criticalPath;
+  const phase = (title, milestones) => milestones.length ? el('section', '', el('h3', '', title),
+    list(milestones.map(item => `${item.label} · ${item.complete ? 'Complete' : 'Remaining'}`))) : null;
+  return [header('Roadmap', 'Development milestones, remaining work, and release dependencies.'), accountFilter(),
+    panel('Milestone coverage', fields([['Programs in view', String(overview.programs.length)],
+      ['Programs with milestones', String(overview.planCount)],
+      ['Milestones in reported plans', overview.milestoneCount ? `${overview.completed} / ${overview.milestoneCount} complete` : 'Unavailable']]),
+    { iconName: 'map' }),
+    el('div', 'main-grid', panel('Development programs', overview.programs.length ? overview.programs.map(({ developer, report, plan, estimate }) => {
+      const release = releases.get(developer.assignmentId);
+      const milestones = plan?.milestones ?? [];
+      return el('details', 'activity-group',
+        el('summary', '', `${developer.project} · ${milestones.length ?
+          `${milestones.filter(item => item.complete).length} / ${milestones.length} complete` : 'Milestones unavailable'}`),
+        fields([['Developer', developerLink(developer, developer.name)], ['Status', statusBadge(developer)],
+          ['Reported milestone', report?.milestone], ['Roadmap revision', plan?.revision],
+          ['Remaining sessions', estimate ? `${estimate.optimistic}–${estimate.conservative} estimated · ${estimate.confidence} confidence` : 'Unavailable'],
+          ['Release state', release ? link(release.stage, '#more/releases') : report?.releaseReadiness],
+          ['Checkpoint', developer.publicCheckpoint ? publicCheckpointLink(developer) : report ? link('Open authenticated report', report.source) : 'Unavailable']]),
+        phase('Development milestones', milestones.filter(item => item.kind === 'development')),
+        phase('Qualification milestones', milestones.filter(item => item.kind === 'qualification')));
+    }) : muted('No registered programs in this scope.'), { iconName: 'map' }),
+    el('div', 'stack',
+      panel('Critical path', [
+        critical ? [muted(`${critical.sessions} estimated work sessions along the longest registered chain.`),
+          el('ol', 'items', critical.programs.map(({ developer }) => el('li', '', developerLink(developer))))] :
+          muted('Critical-path duration is unavailable with the current dependency and estimate coverage.'),
+        overview.cycles.length ? list(overview.cycles.map(cycle => 'Circular dependency · ' + cycle)) : null,
+        overview.bottlenecks.length ? list(overview.bottlenecks.map(entry =>
+          link(`${label(entry.assignmentId)} · ${entry.edges.length} open prerequisite ${entry.edges.length === 1 ? 'link' : 'links'}`, entry.edges[0].source))) : null,
+      ], { iconName: 'signal' }),
+      panel('Release dependencies', list(overview.edges.map(edge =>
+        link(`${label(edge.assignment)} depends on ${label(edge.prerequisite)} · ${edge.state}`, edge.source)), 'No registered dependencies'),
+      { iconName: 'branch' }),
+      panel('Local proposals', list(localProposals.map(item => String(item.title)), 'No local proposals'), { end: link('Idea Vault', '#more/ideas') })))];
 }
 
 function noCreatorActions() {
@@ -690,6 +715,9 @@ function congestionPage() {
 }
 
 function history() {
+  const scope = scopedAssignments();
+  const ids = new Set(scope.map(item => item.assignmentId));
+  const scopedSnapshot = { ...snapshot, reports: snapshot.reports.filter(item => ids.has(item.assignmentId)) };
   const modes = [['1', 'Past day', 1], ['7', 'Past week', 7], ['30', 'Past month', 30], ['all', 'Lifetime', null]];
   const selected = el('select', '', modes.map(([value, label]) => {
     const option = el('option', '', label);
@@ -700,24 +728,88 @@ function history() {
   const display = el('div', 'stack');
   function refreshHistory() {
     const mode = modes.find(([value]) => value === selected.value);
-    const data = summarize(snapshot, mode[2]);
-    const previous = mode[2] === null ? null : summarize(snapshot, mode[2],
+    const data = summarize(scopedSnapshot, mode[2]);
+    const previous = mode[2] === null ? null : summarize(scopedSnapshot, mode[2],
       Date.parse(snapshot.generatedAt) - mode[2] * 24 * 60 * 60_000 - 1);
+    const timeline = studioTimeline(snapshot, scope, mode[2], accountScope === 'all');
     display.replaceChildren(panel('Reporting summary', [
-      fields([['Window', mode[1]], ['Assignments reporting', `${data.assignments} / ${snapshot.developers.length}`],
+      fields([['Window', mode[1]], ['Assignments reporting', `${data.assignments} / ${scope.length}`],
         ['Meaningful sessions in reports', data.reports.length ? String(data.meaningful.length) : 'Unknown'],
         ['Milestones completed in reports', data.reports.length ? String(data.milestones) : 'Unknown'],
         ['Previous window: meaningful sessions', previous?.reports.length ? String(previous.meaningful.length) : 'Unknown']]),
       data.reports.length ? null : muted('No verified reports cover this period.'),
     ], { iconName: 'signal' }), panel('Creator briefing', data.accomplishments.length ?
       rows(data.accomplishments.map(({ text, item }) => row(link(text, item.source), time(item.reportedAt)))) :
-      muted('No verified accomplishments are available in this period.'), { iconName: 'book' }));
+      muted('No verified accomplishments are available in this period.'), { iconName: 'book' }),
+    panel('Studio timeline', timeline.length ? [
+      rows(timeline.slice(0, 60).map(item => row(link(item.title, item.source), [time(item.at), item.detail && ` · ${item.detail}`], badge(item.type)))),
+      timeline.length > 60 ? muted(`Showing the 60 most recent of ${timeline.length} observed events.`) : null,
+    ] : muted('No sourced events in this window.'), { iconName: 'bolt' }));
   }
   selected.addEventListener('change', refreshHistory);
   refreshHistory();
-  return [header('Development history', 'Summaries are based on validated session reports.'),
+  return [header('Development history', 'Reported accomplishments and verified GitHub events.'), accountFilter(),
     el('div', 'main-grid', el('div', 'stack', panel('Reporting window', el('label', '', 'Period', selected)), display),
       panel('Congestion evidence', actions(link('Open Congestion', '#more/congestion', 'button')), { iconName: 'signal' }))];
+}
+
+function automations() {
+  const oversight = automationOverview(snapshot, scopedAssignments());
+  return [header('Automation oversight', 'Schedules, authenticated sessions, and published repository checkpoints.'), accountFilter(),
+    panel('Automatic assignments', [
+      fields([['Roster entries in view', String(oversight.length)],
+        ['Schedules observed in the last 24 hours', String(oversight.filter(item => item.scheduleCurrent).length)],
+        ['Assignments with an authenticated report', String(oversight.filter(item => item.latest).length)]]),
+      oversight.length ? oversight.map(({ developer, latest, currentReport, accomplishments, failures, next, production }) => {
+        const recorded = developer.lastSchedulerResult;
+        const configuration = developer.scheduleEnabled == null ? 'Unavailable' : developer.scheduleEnabled ? 'Enabled when checked' : 'Paused when checked';
+        const slot = Number.isInteger(developer.minute) ? `Hourly at :${String(developer.minute).padStart(2, '0')}` : null;
+        return el('details', 'activity-group', el('summary', '', `${developer.name} · ${developer.project}`),
+          fields([['Profile', developerLink(developer, developer.name)], ['Schedule', slot ?
+            `${slot}${developer.scheduleObservedAt ? ` · ${developer.timezone}` : ' · creator brief'}` : 'Unavailable'],
+            ['Scheduler configuration', configuration], ['Configuration observed', time(developer.scheduleObservedAt)],
+            ['Next expected from last observation', next ? time(next) : 'Unavailable'],
+            ['Last scheduler completion observed', time(recorded?.completedAt)],
+            ['Last reported execution', latest?.execution ? link(time(latest.execution.observedAt), latest.execution.evidence) : 'Unavailable'],
+            ['Last report outcome', latest ? link(latest.outcome, latest.source) : 'Unavailable'],
+            ['Consecutive failed or blocked reports', failures == null ? 'Unavailable' : String(failures)],
+            ['Latest meaningful accomplishment', accomplishments ? link(accomplishments.completed[0], accomplishments.source) : 'Unavailable'],
+            ['Repository checkpoint', developer.publicCheckpoint ? publicCheckpointLink(developer) : 'Unavailable'],
+            ['Output linked by scheduler', recorded?.publicOutput ? link('Open commit', recorded.publicOutput) : 'Unavailable'],
+            ['Verified production output', production ? link(short(production.head), production.source) : 'Unavailable']]),
+          el('h3', '', 'Current reported blockers'), list(currentReport?.blockers?.map(item => link(item.description, item.evidence)),
+            currentReport?.blockers ? 'None reported at this commit.' : 'Unavailable at this commit.'));
+      }) : muted('No automation assignments in this scope.'),
+      actions(link('View development efficiency', '#more/efficiency', 'button')),
+    ], { iconName: 'bolt' })];
+}
+
+function efficiency() {
+  const developers = scopedAssignments();
+  const items = efficiencySignals(snapshot, developers);
+  const overlaps = creatorActions(snapshot, developers).filter(item => item.kind === 'ownership');
+  const rules = snapshot.directives.filter(item => [501, 509].includes(item.number));
+  const comparisons = developers.filter(item => item.head && item.changeScope?.head === item.head);
+  return [header('Development efficiency', 'Patterns in authenticated session evidence for creator review.'), accountFilter(),
+    panel('Session and qualification patterns', [
+      muted('Matching reports prompt a review of test purpose, inputs, and applicable gates.'),
+      items.length ? rows(items.map(item => row(developerLink(item.developer), [
+        el('strong', '', item.label), el('div', '', item.detail), list(item.sources.map((source, index) => link(`Evidence ${index + 1}`, source))),
+      ]))) : muted('No repeated patterns in the available structured reports.'),
+    ], { iconName: 'signal' }),
+    panel('Ownership and creator directives', [
+      overlaps.length ? rows(overlaps.map(item => commandRow(item, true))) : null,
+      list(rules.map(item => link(`#${item.number} · ${item.name}`, item.source)), 'Directives unavailable'),
+    ], { iconName: 'book' }),
+    panel('Recorded change boundaries', comparisons.length ? comparisons.map(developer => {
+      const result = developer.changeScope;
+      return el('details', 'activity-group', el('summary', '',
+        `${developer.project} · ${result.complete ? '' : 'At least '}${result.count} paths outside recorded scope`),
+        fields([['Base and candidate', link(`${short(result.base)} → ${short(result.head)}`, result.source)],
+          ['Creator ownership source', developer.ownership ? link('Read recorded boundaries', developer.ownership.source) : 'Unavailable'],
+          ['Workflow or build paths outside scope', String(result.infrastructure)]]),
+        result.outside.length ? list(result.outside) : null);
+    }) : muted('Exact change comparisons are available for assignments with reviewed file boundaries.'), { iconName: 'branch' })];
 }
 
 function directives() {
@@ -742,7 +834,7 @@ function render(navigate = false) {
   }
   document.querySelector('#current-view').textContent = routes.find(([id]) => id === route)[1];
   let content;
-  const moreView = { coverage, activity, releases, evidence, history, directives, congestion: congestionPage,
+  const moreView = { coverage, activity, releases, evidence, history, directives, automations, efficiency, congestion: congestionPage,
     blockers: () => [header('Blockers', 'Reported blockers and verified release constraints.'), accountFilter(),
       blockersPanel(snapshot, scopedAssignments(), true)] };
   if (route === 'more' && sub === 'ideas') content = ideasPage(notify);

@@ -68,6 +68,11 @@ export function isSnapshot(data) {
         (value.requested === null || (Number.isSafeInteger(value.requested) && value.requested >= 0))) &&
       nullable(item.requiredGate, value => isRecord(value) && isSha(value.head) &&
         ['failed', 'pending', 'clear', 'unavailable'].includes(value.state) && sourceLink(value.source)) &&
+      nullable(item.changeScope, value => isRecord(value) && isSha(value.head) && isSha(value.base) && sourceLink(value.source) &&
+        typeof value.complete === 'boolean' && typeof value.policyIssue === 'string' && /^[a-f0-9]{64}$/.test(value.policyIssue) &&
+        Array.isArray(value.outside) && value.outside.length <= 15 && value.outside.every(text) &&
+        Number.isSafeInteger(value.count) && value.count >= value.outside.length &&
+        Number.isSafeInteger(value.infrastructure) && value.infrastructure >= 0 && value.infrastructure <= value.count) &&
       nullable(item.reportFeedState, value => ['ok', 'partial', 'unavailable'].includes(value)) &&
       nullable(item.scheduleEnabled, value => typeof value === 'boolean') &&
       nullable(item.scheduleObservedAt, isISO) && nullable(item.scheduleStartsAt, isISO) &&

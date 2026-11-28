@@ -5,6 +5,7 @@ import { appendReports, parseReport, publicText, reportKey } from './report.mjs'
 import { collectOwnership, readCheckpoint, readCreatorReleaseRecord } from './checkpoints.mjs';
 import { qualificationInventory, reconcileQualification, requiredChecks } from './qualification.mjs';
 import { matchProduction, observeProduction } from './publication.mjs';
+import { inspectChangeScope } from './scope.mjs';
 export { publicVersion } from './publication.mjs';
 
 const pathFor = (repo, path) => `/repos/${repo}${path}`;
@@ -294,6 +295,27 @@ export async function collect({ previous, state, token, fetcher = fetch, now = n
     }),
   ]);
 
+  const scopes = await preserve('changeScope', new Map(), async () => {
+    const registered = registry.filter(item => item.scopePaths);
+    const checked = await Promise.allSettled(registered.map(async item => {
+      const candidate = candidateFor(item);
+      const developer = developers.find(value => value.assignmentId === item.assignmentId);
+      if (!developer?.head || candidate?.head !== developer.head || !registeredOwnership.get(item.assignmentId)) {
+        throw new Error('Source or authorized boundaries unavailable');
+      }
+      const prior = previous?.developers.find(value => value.assignmentId === item.assignmentId)?.changeScope;
+      if (prior?.complete && prior.head === candidate.head && prior.base === candidate.base &&
+          prior.policyIssue === item.ownershipSource.digest) return [item.assignmentId, prior];
+      return [item.assignmentId, {
+        ...await inspectChangeScope(candidate, item.scopePaths, detail), policyIssue: item.ownershipSource.digest,
+      }];
+    }));
+    const result = new Map(checked.flatMap(item => item.status === 'fulfilled' ? [item.value] : []));
+    const missing = registered.length - [...result.values()].filter(item => item.complete).length;
+    if (missing) mark('changeScope', missing < registered.length || result.size ? 'partial' : 'error', 'Some approved scope comparisons are incomplete');
+    return result;
+  });
+
   const requiredGates = new Map();
   const checks = await preserve('checks', [], async () => {
     const contexts = new Map();
@@ -381,6 +403,8 @@ export async function collect({ previous, state, token, fetcher = fetch, now = n
         statuses.every(state => state === 'unavailable') ? 'unavailable' : 'partial';
       return { ...item, reportFeedState, ownership: ownership.get(item.assignmentId) ?? null,
         publicCheckpoint: checkpoints.get(item.assignmentId) ?? null,
+        changeScope: ownership.get(item.assignmentId)?.source === registeredOwnership.get(item.assignmentId)?.source ?
+          scopes.get(item.assignmentId) ?? null : null,
         review: reviews.get(item.pr) ?? null, requiredGate: requiredGates.get(item.assignmentId) ?? null };
     }),
     pulls, issues, workflows, workflowLoad: activeWorkflowLoad, checks, releases, deployments, production, publication, releaseRecords, schedule,
@@ -389,7 +413,7 @@ export async function collect({ previous, state, token, fetcher = fetch, now = n
   return { snapshot, state: { tags: client.tags, reportsSince }, collectionSucceeded, canPublish: Boolean(health.lastSuccess) };
 }
 
-function publicAssignment({ reportSources, ownershipSource, checkpointSource, ...record }) {
+function publicAssignment({ reportSources, ownershipSource, checkpointSource, scopePaths, ...record }) {
   return { ...record, registeredSources: reportSources.map(source => git(source.repository, `/issues/${source.number}`)),
     head: null, branchHead: null, headStatus: 'Unknown' };
 }

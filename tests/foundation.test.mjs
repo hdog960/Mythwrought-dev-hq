@@ -291,9 +291,10 @@ test('Developer state needs timely direct execution, an exact-commit checkpoint 
 
 test('Congestion exposes evidence bounds, separates caps from failures, and scopes the queue', async () => {
   const { congestion, summarize } = await import('../src/insights.mjs');
-  const report = parseReport(markdown({ newlyCompleted: ['m1'], blockers: [], decisions: [], dependencyIds: [] }),
+  const report = parseReport(markdown({ newlyCompleted: ['m1'], blockers: [], decisions: [], dependencyIds: [], releaseReadiness: 'development' }),
     developer, source, comment);
-  const registered = { ...developer, head: current, reportFeedState: 'ok', review: { head: current, requested: 2, source: url } };
+  const registered = { ...developer, head: current, reportFeedState: 'ok', review: { head: current, requested: 2, source: url },
+    ownership: { workspace: 'personal', assignmentState: 'assigned', owner: 'Owner', exclusiveScopes: [], source: url } };
   const pull = { head: current, number: registered.pr, headRepositoryMatches: true, state: 'open', draft: false, source: url };
   const snapshot = { developers: [registered, { ...registry[2], status: 'Deferred per brief' }],
     reports: [report, { ...report, reportId: 'report-2', outcome: 'qualification' }],
@@ -301,16 +302,16 @@ test('Congestion exposes evidence bounds, separates caps from failures, and scop
   const partial = congestion(snapshot);
   assert.equal(partial.denominator, 1);
   assert.equal(partial.score, null);
-  assert.equal(partial.coverage, 75);
-  assert.deepEqual([partial.lower, partial.upper], [15, 40]);
+  assert.equal(partial.coverage, 80);
+  assert.deepEqual([partial.lower, partial.upper], [10, 30]);
   snapshot.reports[1].blockers = [{ id: 'blocker-1', category: 'technical defect', description: 'Investigate', evidence: url },
     { id: 'queued-1', category: 'CI waiting' }];
   registered.requiredGate = { head: current, state: 'pending', source: url };
-  assert.equal(congestion(snapshot).score, 60);
+  assert.equal(congestion(snapshot).score, 50);
   assert.equal(congestion(snapshot, []).score, null);
   pull.draft = true;
   const draft = congestion(snapshot);
-  assert.equal(draft.score, 45);
+  assert.equal(draft.score, 40);
   assert.equal(draft.candidates[0].pull.draft, true);
   registered.requiredGate.head = old;
   assert.equal(congestion(snapshot).score, null);

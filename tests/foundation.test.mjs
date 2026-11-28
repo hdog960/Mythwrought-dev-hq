@@ -7,6 +7,8 @@ import { approvalQueue, cyclesIn, estimateFor, freshState, isSnapshot, latestFor
 import { registry } from '../config/sources.mjs';
 import { accountOf, assignmentStatus, continuationFor, conversationURL, developerWork, nextScheduledRun, scopedDevelopers, workflowBuckets } from '../src/operations.mjs';
 import { creatorActions } from '../src/command-center.mjs';
+import { collectOwnership, readCheckpoint } from '../scripts/checkpoints.mjs';
+import { createHash } from 'node:crypto';
 
 const developer = registry[0];
 const instant = '2026-11-27T18:00:00Z';
@@ -60,6 +62,38 @@ test('Workspace ownership requires a creator publisher and overrides local accou
   assert.equal(accountOf({ ...developer, ownership }, { [developer.id]: 'personal' }), 'business');
 });
 
+test('Public checkpoints and issue ownership require the enrolled source and exact GitHub evidence', async () => {
+  const spec = { path: 'docs/example/checkpoint.md' };
+  const assignment = { ...developer, head: current };
+  const revision = { sha: old, commit: { committer: { date: instant } } };
+  const reads = [];
+  const file = await readCheckpoint(assignment, spec, null, async route => {
+    reads.push(route);
+    return route.includes('/commits?') ? [revision] : { type: 'file', path: spec.path, sha: base };
+  });
+  assert.match(reads[0], new RegExp(current));
+  assert.match(reads[1], new RegExp(old));
+  assert.equal(file.observedHead, current);
+  assert.equal(file.commit, old);
+  assert.match(file.source, new RegExp(old));
+  assert.equal(await readCheckpoint(assignment, spec, file, () => assert.fail('immutable file fetched twice')), file);
+  await assert.rejects(readCheckpoint(assignment, spec, null, async () => []), /revision unavailable/);
+  const marker = { comment: 100, commit: old };
+  const ownerComment = { id: 100, html_url: url, user: { id: comment.publisher }, author_association: 'OWNER',
+    body: `Observed ${old}.`, updated_at: instant };
+  assert.equal((await readCheckpoint(assignment, marker, null, async route => route.includes('/compare/') ?
+    { status: 'ahead', merge_base_commit: { sha: old } } : ownerComment)).source, url);
+  await assert.rejects(readCheckpoint(assignment, marker, null, async () => ({ ...ownerComment, html_url: url + '1' })), /comment unavailable/);
+  await assert.rejects(readCheckpoint(assignment, marker, null, async route => route.includes('/compare/') ?
+    { status: 'diverged' } : ownerComment), /outside/);
+  const body = 'Creator assigned a lane.';
+  const created = { number: 511, state: 'open', user: { id: comment.publisher }, author_association: 'OWNER', body, created_at: instant };
+  const enrollment = { ...assignment, ownershipSource: { issue: 511, workspace: 'business', owner: 'Owner', exclusiveScopes: [],
+    digest: createHash('sha256').update(body).digest('hex') } };
+  assert.equal((await collectOwnership([enrollment], async () => created)).get(assignment.assignmentId).workspace, 'business');
+  assert.equal((await collectOwnership([enrollment], async () => ({ ...created, body: 'Edited' }))).get(assignment.assignmentId), null);
+});
+
 test('Exact-commit approvals persist across unrelated reports and invalidate on a new HEAD', () => {
   const decision = { id: 'merge-1', category: 'merge', action: 'Merge candidate', reason: 'Release',
     requestedAt: instant, commit: current, state: 'requested' };
@@ -108,7 +142,7 @@ test('Collector verifies report and pull HEAD, deduplicates, and preserves prior
   const github = 'https://api.github.com/repos/hdog960/Mythwrought';
   const fakePull = { number: 503, title: 'Registered draft pull', draft: true, state: 'open',
     head: { sha: current, ref: developer.branch, repo: { full_name: developer.repository } }, base: { sha: base, ref: 'main' } };
-  const secondary = { ...fakePull, number: 502, head: { ...fakePull.head, ref: registry[1].branch } };
+  const secondary = { ...fakePull, number: 502, draft: false, head: { ...fakePull.head, ref: registry[1].branch } };
   let partialOutage = false;
   const fakeFetch = async url => {
     const href = String(url);
@@ -123,6 +157,7 @@ test('Collector verifies report and pull HEAD, deduplicates, and preserves prior
     if (path.endsWith('/git/ref/heads/main')) return Response.json({ object: { sha: base } });
     if (path.endsWith('/pulls/503')) return partialOutage ? new Response(null, { status: 404 }) : Response.json(fakePull);
     if (path.endsWith('/pulls/502')) return Response.json(secondary);
+    if (path.endsWith('/pulls/502/requested_reviewers')) return Response.json({ users: [{}], teams: [{}] });
     if (path.endsWith('/pulls')) return Response.json([fakePull, secondary]);
     if (path.endsWith('/issues/503/comments')) return Response.json(
       [{ body: markdown(), user: { id: comment.publisher }, created_at: instant, html_url: urlFor(1) },
@@ -153,6 +188,9 @@ test('Collector verifies report and pull HEAD, deduplicates, and preserves prior
   const urlFor = id => `https://github.com/hdog960/Mythwrought/pull/503#issuecomment-${id}`;
   const first = await collect({ fetcher: fakeFetch, now: new Date(instant) });
   assert.equal(first.snapshot.developers[0].head, current);
+  assert.equal(first.snapshot.developers[0].review, null);
+  assert.equal(first.snapshot.developers[1].review.requested, 2);
+  assert.equal(first.snapshot.developers[1].requiredGate.state, 'unavailable');
   const hqDeveloper = first.snapshot.developers.find(item => item.id === 'hq');
   assert.equal(hqDeveloper.head, base);
   assert.equal(hqDeveloper.headStatus, 'Repository branch confirmed');
@@ -243,19 +281,31 @@ test('Developer state needs timely direct execution, an exact-commit checkpoint 
   assert.equal(assignmentStatus(snapshot, first, now).label, 'Status unknown');
 });
 
-test('Congestion grows with evidence, excludes deferral, and history deduplicates milestone deliveries', async () => {
+test('Congestion exposes evidence bounds, separates caps from failures, and scopes the queue', async () => {
   const { congestion, summarize } = await import('../src/insights.mjs');
   const report = parseReport(markdown({ newlyCompleted: ['m1'], blockers: [], decisions: [], dependencyIds: [] }),
     developer, source, comment);
-  const snapshot = { developers: [{ ...developer, head: current }, { ...registry[2], status: 'Deferred per brief' }],
+  const registered = { ...developer, head: current, reportFeedState: 'ok', review: { head: current, requested: 2, source: url } };
+  const pull = { head: current, number: registered.pr, headRepositoryMatches: true, state: 'open', draft: false, source: url };
+  const snapshot = { developers: [registered, { ...registry[2], status: 'Deferred per brief' }],
     reports: [report, { ...report, reportId: 'report-2', outcome: 'qualification' }],
-    checks: [], dependencies: [], generatedAt: instant };
-  const clear = congestion(snapshot);
-  assert.equal(clear.denominator, 1);
-  assert.equal(clear.score, null);
-  assert.equal(clear.knownPressure, 0);
-  snapshot.reports[1].blockers = [{ id: 'blocker-1', category: 'technical defect' }, { id: 'queued-1', category: 'CI waiting' }];
-  assert.equal(congestion(snapshot).knownPressure, 25);
+    checks: [], dependencies: [], directives: [], pulls: [pull], generatedAt: instant };
+  const partial = congestion(snapshot);
+  assert.equal(partial.denominator, 1);
+  assert.equal(partial.score, null);
+  assert.equal(partial.coverage, 75);
+  assert.deepEqual([partial.lower, partial.upper], [15, 40]);
+  snapshot.reports[1].blockers = [{ id: 'blocker-1', category: 'technical defect', description: 'Investigate', evidence: url },
+    { id: 'queued-1', category: 'CI waiting' }];
+  registered.requiredGate = { head: current, state: 'pending', source: url };
+  assert.equal(congestion(snapshot).score, 60);
+  assert.equal(congestion(snapshot, []).score, null);
+  pull.draft = true;
+  const draft = congestion(snapshot);
+  assert.equal(draft.score, 45);
+  assert.equal(draft.candidates[0].pull.draft, true);
+  registered.requiredGate.head = old;
+  assert.equal(congestion(snapshot).score, null);
   assert.equal(summarize(snapshot, 1).meaningful.length, 1);
   assert.equal(summarize(snapshot, 1).milestones, 1);
   assert.equal(summarize(snapshot, 1, Date.parse(instant) - 1).reports.length, 0);

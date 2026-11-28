@@ -1,4 +1,4 @@
-import { approvalQueue, latestFor, sourceLink } from './model.mjs';
+import { approvalQueue, failedRequiredCheck, latestFor, sourceLink } from './model.mjs';
 
 export const actionGroups = {
   ownership: { name: 'Ownership conflicts', tone: 'red', rank: 0 },
@@ -12,7 +12,6 @@ export const actionGroups = {
 };
 
 const engineeringTypes = new Set(['access', 'architecture', 'merge conflict', 'missing source', 'required CI failure', 'technical defect']);
-const failedConclusions = new Set(['failure', 'timed_out', 'action_required', 'startup_failure']);
 const repoKey = item => item.repository.toLowerCase();
 
 function overlaps(developers) {
@@ -68,7 +67,7 @@ export function creatorActions(snapshot, scope = snapshot.developers) {
       add(kind, [developer], action, reason, 'Reported request', [request.report.source, evidence, pull?.source], request);
     }
     const failures = pull ? snapshot.checks.filter(check => check.number === pull.number && check.head === pull.head &&
-      check.mandatory === true && !check.preserved && check.status === 'completed' && failedConclusions.has(check.conclusion)) : [];
+      failedRequiredCheck(check)) : [];
     if (failures.length) {
       add('qualification', [developer], 'Review failed required checks',
         [...new Set(failures.map(item => item.title))].join(' · '), 'Verified GitHub checks', [...failures.map(item => item.source), pull.source]);

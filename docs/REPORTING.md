@@ -1,6 +1,6 @@
 # Developer reports and onboarding
 
-HQ prefers existing authorized public checkpoint comments or dedicated public HQ tracking issues. A source is enrolled by an HQ configuration change mapping one assignment to a repository, issue or pull request number, and explicitly approved GitHub publisher account IDs. Current intake reads game PRs #502 and #503 and HQ PR #1. HQ PR #1 is the checkpoint for the Development HQ assignment. Approval for a new source or an amendment to an active developer or automation belongs to the creator.
+HQ prefers existing authorized public checkpoint comments or dedicated public HQ tracking issues. A source is enrolled by an HQ configuration change mapping one assignment to a repository, issue or pull request number, and explicitly approved GitHub publisher account IDs. Structured intake reads game PRs #502, #503, #514 and #515 and HQ PR #1. HQ PR #1 is the reporting source for the Development HQ assignment. Approval for a new source or an amendment to an active developer or automation belongs to the creator.
 
 ## Report format
 
@@ -29,6 +29,14 @@ Examples rejected by design include an abbreviated commit, mismatched assignment
 Under [creator rule #509](https://github.com/hdog960/Mythwrought/issues/509), the optional `ownership` object records an existing explicit creator decision. The source must be enrolled for creator ownership records and the comment must come from its allowlisted creator account. Use `workspace` of `personal` or `business`, `assignmentState` of `assigned` or `unassigned`, a public accountable `owner` label (or `null` when unassigned), and `exclusiveScopes` containing stable IDs for explicitly reserved work packages. Use an empty list when there are no explicit reservations. Agree on the IDs in the canonical issue or PR before recording a reservation. HQ compares exact scope IDs or branch names within a repository and links both owner records when it finds an overlap. Page preferences remain a browser-local fallback.
 
 Record ownership in the next meaningful authorized checkpoint. The latest creator ownership record persists across ordinary progress reports and changes only when a later authenticated creator record replaces it. Keep unconfirmed workspace ownership unavailable.
+
+The existing ownership issues [#511](https://github.com/hdog960/Mythwrought/issues/511), [#512](https://github.com/hdog960/Mythwrought/issues/512), and [#513](https://github.com/hdog960/Mythwrought/issues/513) already identify the ten Business liquid lanes and two Personal lanes. The collector verifies the creator account, open issue, and reviewed body digest before displaying these records. A changed issue needs review. A newer authenticated ownership report takes precedence.
+
+## Public checkpoint links
+
+Enrolled checkpoint files and creator comments can appear on the dashboard before an assignment publishes its first structured report. Files link to the latest revision of the exact enrolled path within the verified branch history. A pinned creator comment must belong to the enrolled PR, carry the expected full SHA, and remain on the verified assignment history. HQ publishes link, date, and commit metadata. Use a structured report for ownership changes, activity claims, decisions, typed blockers, qualification, or copyable continuation text. An older checkpoint remains visible as a historical link.
+
+The linked sources cover the public #503 merge checkpoint, the #502 session handoff, Skill and Combat owner comments, and the stable checkpoint path on each of the ten Business liquid lanes. A new session-specific path or comment can be enrolled after review, or the owner can publish a structured report to the existing feed.
 
 ## Developer run status
 

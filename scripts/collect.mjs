@@ -1,7 +1,8 @@
 import { creatorGithubId, dependencies, directives, game, git, hq, productionURL, qualificationWorkflows, registry } from '../config/sources.mjs';
-import { SNAPSHOT_VERSION, WORKFLOW_STATES, isISO, isSha, isSnapshot, sourceLink } from '../src/model.mjs';
+import { SNAPSHOT_VERSION, WORKFLOW_STATES, failedRequiredCheck, isISO, isSha, isSnapshot, sourceLink } from '../src/model.mjs';
 import { createGitHub } from './github.mjs';
 import { appendReports, parseReport, publicText, reportKey } from './report.mjs';
+import { collectOwnership, readCheckpoint } from './checkpoints.mjs';
 
 const pathFor = (repo, path) => `/repos/${repo}${path}`;
 const gamePath = path => pathFor(game, path);
@@ -44,6 +45,18 @@ function check(row, candidate, required, mandatoryContextKnown) {
     status: text(row.status, 40), conclusion: text(row.conclusion, 40),
     mandatory: requirement ? true : mandatoryContextKnown ? false : null,
     updatedAt: date(row.completed_at ?? row.started_at), source: link ?? candidate.source };
+}
+
+function gateState(checks, rows, required, complete, candidate) {
+  const observed = checks.filter(item => item.mandatory === true);
+  const failed = observed.find(failedRequiredCheck);
+  if (failed) return { state: 'failed', source: failed.source };
+  const pending = observed.find(item => ['queued', 'in_progress', 'waiting', 'pending', 'requested'].includes(item.status));
+  if (pending) return { state: 'pending', source: pending.source };
+  const passing = required.every(rule => rows.some(row => row.head_sha === candidate.head && row.name === rule.context &&
+    (!pos(rule.app_id) || row.app?.id === rule.app_id) && row.status === 'completed' &&
+    ['success', 'neutral', 'skipped'].includes(row.conclusion)));
+  return { state: complete && passing ? 'clear' : 'unavailable', source: candidate.source };
 }
 
 async function requiredChecks(base, detail) {
@@ -225,13 +238,17 @@ export async function collect({ previous, state, token, fetcher = fetch, now = n
       return results;
     }),
     preserve('schedule', previous?.schedule ?? null, async () => {
-      const result = await detail(pathFor(hq, '/actions/workflows/hq-pages.yml/runs?event=schedule&per_page=1'));
+      const result = await detail(pathFor(hq, '/actions/workflows/hq-pages.yml/runs?event=schedule&per_page=10'));
       if (!Array.isArray(result?.workflow_runs)) throw new Error('Schedule run history unavailable');
       const latest = result.workflow_runs[0];
       if (!latest && result.total_count === 0) return { latest: null };
-      if (!pos(latest?.id) || latest.event !== 'schedule' || !date(latest.created_at)) throw new Error('Scheduled run unavailable');
-      return { latest: { createdAt: latest.created_at, status: text(latest.status, 40), conclusion: text(latest.conclusion, 40),
-        source: git(hq, `/actions/runs/${latest.id}`) } };
+      function scheduledRun(item) {
+        if (!pos(item?.id) || item.event !== 'schedule' || !date(item.created_at)) throw new Error('Scheduled run unavailable');
+        return { createdAt: item.created_at, status: text(item.status, 40), conclusion: text(item.conclusion, 40),
+          source: git(hq, `/actions/runs/${item.id}`) };
+      }
+      const completed = result.workflow_runs.find(item => item.status === 'completed');
+      return { latest: scheduledRun(latest), lastCompleted: completed ? scheduledRun(completed) : null };
     }),
   ]);
 
@@ -269,6 +286,51 @@ export async function collect({ previous, state, token, fetcher = fetch, now = n
     return resolved;
   });
 
+  const [registeredOwnership, checkpoints, reviews] = await Promise.all([
+    preserve('ownership', new Map(), async () => {
+      const records = await collectOwnership(registry, detail);
+      const available = [...records.values()].filter(Boolean).length;
+      if (available < records.size) mark('ownership', available ? 'partial' : 'error',
+        `${records.size - available} ownership records unavailable or need review`);
+      return records;
+    }),
+    preserve('checkpoints', new Map(), async () => {
+      const enrolled = registry.filter(item => item.checkpointSource);
+      const records = await Promise.all(enrolled.map(async item => {
+        const assignment = developers.find(developer => developer.assignmentId === item.assignmentId);
+        const prior = previous?.developers.find(developer => developer.assignmentId === item.assignmentId &&
+          developer.branch === item.branch)?.publicCheckpoint;
+        try {
+          return [item.assignmentId, await readCheckpoint(assignment, item.checkpointSource, prior, detail)];
+        } catch {
+          return [item.assignmentId, prior ? { ...prior, preserved: true } : null];
+        }
+      }));
+      const available = records.filter(([, record]) => record && !record.preserved).length;
+      if (available < records.length) mark('checkpoints', available ? 'partial' : 'error',
+        `${records.length - available} enrolled checkpoints could not be verified`);
+      return new Map(records);
+    }),
+    preserve('reviews', new Map(), async () => {
+      const candidates = developers.filter(item => item.head && item.pr).map(candidateFor)
+        .filter(item => item?.state === 'open' && !item.draft);
+      const records = await Promise.all(candidates.map(async item => {
+        const source = git(game, `/pull/${item.number}`);
+        try {
+          const data = await detail(gamePath(`/pulls/${item.number}/requested_reviewers`));
+          if (!Array.isArray(data.users) || !Array.isArray(data.teams)) throw new Error('Review requests unavailable');
+          return [item.number, { head: item.head, requested: data.users.length + data.teams.length, source }];
+        } catch {
+          return [item.number, { head: item.head, requested: null, source }];
+        }
+      }));
+      const missing = records.filter(([, record]) => record.requested === null).length;
+      if (missing) mark('reviews', missing === records.length ? 'error' : 'partial', `${missing} PR review queues unavailable`);
+      return new Map(records);
+    }),
+  ]);
+
+  const requiredGates = new Map();
   const checks = await preserve('checks', [], async () => {
     const contexts = new Map();
     const inventories = new Map();
@@ -282,7 +344,10 @@ export async function collect({ previous, state, token, fetcher = fetch, now = n
       try {
         const [required, found] = await Promise.all([contexts.get(base), inventories.get(candidate.head)]);
         const checks = found.items.map(item => check(item, candidate, required.checks, required.complete)).filter(Boolean);
-        return { checks, complete: required.complete && !found.limited };
+        const complete = required.complete && !found.limited;
+        requiredGates.set(developer.assignmentId, { head: candidate.head,
+          ...gateState(checks, found.items, required.checks, complete, candidate) });
+        return { checks, complete };
       } catch {
         const saved = (previous?.checks ?? []).filter(item => item.number === candidate.number && item.head === candidate.head);
         return { checks: saved.map(item => ({ ...item, mandatory: null, preserved: true })), complete: false, unavailable: true };
@@ -347,9 +412,9 @@ export async function collect({ previous, state, token, fetcher = fetch, now = n
   const collectionSucceeded = Boolean(head && sources.branches.state === 'ok' && sources.pulls.state !== 'error');
   health.lastSuccess = collectionSucceeded ? attemptedAt : previous?.health.lastSuccess ?? null;
   health.rateLimit = client.rate;
-  const ownership = new Map();
+  const ownership = new Map(registeredOwnership);
   for (const report of reports) {
-    if (report.ownership) ownership.set(report.assignmentId, {
+    if (report.ownership && report.reportedAt >= (ownership.get(report.assignmentId)?.reportedAt ?? '')) ownership.set(report.assignmentId, {
       ...report.ownership, source: report.source, reportedAt: report.reportedAt,
     });
   }
@@ -358,7 +423,9 @@ export async function collect({ previous, state, token, fetcher = fetch, now = n
       const statuses = feedResults.get(item.assignmentId);
       const reportFeedState = !statuses.length ? null : statuses.every(state => state === 'ok') ? 'ok' :
         statuses.every(state => state === 'unavailable') ? 'unavailable' : 'partial';
-      return { ...item, reportFeedState, ownership: ownership.get(item.assignmentId) ?? null };
+      return { ...item, reportFeedState, ownership: ownership.get(item.assignmentId) ?? null,
+        publicCheckpoint: checkpoints.get(item.assignmentId) ?? null,
+        review: reviews.get(item.pr) ?? null, requiredGate: requiredGates.get(item.assignmentId) ?? null };
     }),
     pulls, issues, workflows, workflowLoad: activeWorkflowLoad, checks, releases, deployments, production, schedule,
     reports, directives: activeDirectives, dependencies };
@@ -366,7 +433,7 @@ export async function collect({ previous, state, token, fetcher = fetch, now = n
   return { snapshot, state: { tags: client.tags, reportsSince }, collectionSucceeded, canPublish: Boolean(health.lastSuccess) };
 }
 
-function publicAssignment({ reportSources, ...record }) {
+function publicAssignment({ reportSources, ownershipSource, checkpointSource, ...record }) {
   return { ...record, registeredSources: reportSources.map(source => git(source.repository, `/issues/${source.number}`)),
     head: null, branchHead: null, headStatus: 'Unknown' };
 }

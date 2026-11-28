@@ -20,6 +20,8 @@ export const isISO = value => typeof value === 'string' && /^\d{4}-\d{2}-\d{2}T\
   && Number.isFinite(Date.parse(value));
 export const isSha = value => typeof value === 'string' && SHA.test(value);
 export const isId = value => typeof value === 'string' && ID.test(value);
+export const failedRequiredCheck = check => check.mandatory === true && !check.preserved && check.status === 'completed' &&
+  ['failure', 'timed_out', 'action_required', 'startup_failure', 'cancelled'].includes(check.conclusion);
 
 export function isOwnership(value) {
   return isRecord(value) && WORKSPACES.includes(value.workspace) &&
@@ -53,11 +55,19 @@ export function isSnapshot(data) {
   const records = value => Array.isArray(value) && value.every(isRecord);
   return nullable(data.mainHead, isSha) && nullable(data.health.lastAttempt, isISO) &&
     nullable(data.health.lastSuccess, isISO) && nullable(data.health.nextExpected, isISO) &&
-    nullable(data.schedule, value => isRecord(value) && Object.hasOwn(value, 'latest') && nullable(value.latest, item => isRecord(item) &&
-      isISO(item.createdAt) && sourceLink(item.source) && nullable(item.status, text) && nullable(item.conclusion, text))) &&
+    nullable(data.schedule, value => isRecord(value) && Object.hasOwn(value, 'latest') &&
+      [value.latest, value.lastCompleted].every(run => nullable(run, item => isRecord(item) &&
+        isISO(item.createdAt) && sourceLink(item.source) && nullable(item.status, text) && nullable(item.conclusion, text)))) &&
     data.developers.every(item => isId(item.id) && isId(item.assignmentId) && nullable(item.head, isSha) &&
       nullable(item.branchObservedAt, isISO) && nullable(item.ownership, value => isOwnership(value) &&
         sourceLink(value.source) && isISO(value.reportedAt)) &&
+      nullable(item.publicCheckpoint, value => isRecord(value) && ['file', 'comment'].includes(value.kind) && isSha(value.commit) &&
+        isSha(value.observedHead) && isISO(value.recordedAt) && sourceLink(value.source) &&
+        nullable(value.preserved, preserved => typeof preserved === 'boolean')) &&
+      nullable(item.review, value => isRecord(value) && isSha(value.head) && sourceLink(value.source) &&
+        (value.requested === null || (Number.isSafeInteger(value.requested) && value.requested >= 0))) &&
+      nullable(item.requiredGate, value => isRecord(value) && isSha(value.head) &&
+        ['failed', 'pending', 'clear', 'unavailable'].includes(value.state) && sourceLink(value.source)) &&
       nullable(item.reportFeedState, value => ['ok', 'partial', 'unavailable'].includes(value)) &&
       nullable(item.scheduleEnabled, value => typeof value === 'boolean') &&
       nullable(item.scheduleObservedAt, isISO) && nullable(item.scheduleStartsAt, isISO) &&

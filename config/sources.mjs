@@ -26,6 +26,21 @@ function assignment(id, category, name, project, options = {}) {
     ...options };
 }
 
+// Reviewed creator issue bodies. If an issue is edited or closed, re-review the
+// mapping before HQ continues to display its ownership as current.
+const liquidOwnership = { issue: 511, workspace: 'business',
+  digest: '6cdb7d5a0664a7a4f511420829fc5508ed7880bb88c2d37b9c526f45d67f5170' };
+const skillOwnership = { issue: 512, workspace: 'personal', owner: 'SKILL DEV', exclusiveScopes: ['path-of-mastery'],
+  digest: '576001eb3a7722ce3f09b5ecf37dfd9311d3e6f77a39f66cfca71dfac452fea7' };
+const combatOwnership = { issue: 513, workspace: 'personal', owner: 'COMBAT DEV', exclusiveScopes: ['age-of-valor'],
+  digest: '6867fd14993b60fc431950a676f3b36c07c91c297e84207bfbf5fe6ed0cdb86e' };
+const liquidBranches = {
+  'water-engine': 'water-core', 'lava-physics': 'lava-physics', 'acid-physics': 'acid-physics',
+  'amber-sap-physics': 'amber-sap-physics', 'liquid-resonance-physics': 'resonance-physics',
+  'water-world': 'water-content', 'lava-world': 'lava-content', 'acid-world': 'acid-content',
+  'amber-sap-world': 'amber-sap-content', 'liquid-resonance-world': 'resonance-content',
+};
+
 const connectedScheduleObservedAt = '2026-11-27T20:30:26Z';
 const connectedFluidSchedules = [
   ['water-engine', 'Water A — Engine', 'Water engine', 0, true],
@@ -51,15 +66,18 @@ const connectedFluidResults = {
 
 const ownerReport = (repository, number) => ({ repository, number, publishers: [creatorGithubId],
   creatorOwnershipPublishers: [creatorGithubId], creatorAuthorizationPublishers: [creatorGithubId] });
+const checkpointComment = (comment, commit) => ({ comment, commit });
 export const registry = [
   assignment('unified', 'manual', 'Three-in-One Developer', 'Creative, Navigation & Performance', {
     authority: 'Public developer toolkit and creator PR', status: 'Release hold', priority: 1,
     branch: 'dev/unified-creative-navigation-performance-20261126', pr: 503, source: git(game, '/pull/503'),
+    checkpointSource: checkpointComment(7231771302, 'a491202726f245cb62a7f9688c1d9528b4432a91'),
     reportSources: [ownerReport(game, 503)],
   }),
   assignment('beasts', 'manual', 'Mob Developer', 'Age of Beasts', {
     authority: 'Public developer toolkit and creator PR', status: 'Merge embargo', deferred: true,
     branch: 'dev/age-of-beasts-ab0-ab1-20261126', pr: 502, source: git(game, '/pull/502'),
+    checkpointSource: { path: 'docs/age-of-beasts/AB7_SESSION_09.md' },
     reportSources: [ownerReport(game, 502)],
   }),
   assignment('cave', 'manual', 'Cave Developer', 'Living Underworld', { status: 'Deferred per brief' }),
@@ -67,6 +85,18 @@ export const registry = [
   assignment('mountain', 'manual', 'Mountain Developer', 'Shattered Peaks', { status: 'Deferred per brief' }),
   assignment('desert', 'manual', 'Desert Developer', 'Forgotten Sands', { status: 'Deferred per brief' }),
   assignment('snow', 'manual', 'Snow Developer', 'Frostbound Expanse', { status: 'Deferred per brief' }),
+  assignment('skills', 'manual', 'Skill Developer', 'Path of Mastery', {
+    authority: 'Creator assignment #512', branch: 'dev/path-of-mastery-pm0-pm2-20261127', pr: 515,
+    source: git(game, '/issues/512'), ownershipSource: skillOwnership,
+    checkpointSource: checkpointComment(7230843005, '388f4bfd2416311a2cb869ab2acec6a0c670f5ce'),
+    reportSources: [ownerReport(game, 515)],
+  }),
+  assignment('combat', 'manual', 'Combat Developer', 'Age of Valor', {
+    authority: 'Creator assignment #513', branch: 'dev/age-of-valor-av0-av1-20261127', pr: 514,
+    source: git(game, '/issues/513'), ownershipSource: combatOwnership,
+    checkpointSource: checkpointComment(7230827729, 'ed0b0e85d541380d456177d1a0725e02a833c734'),
+    reportSources: [ownerReport(game, 514)],
+  }),
   assignment('builder', 'automatic', 'Master Builder A–D', 'Standalone building blueprints', {
     authority: 'Public creator issue', minute: 0, source: git(game, '/issues/507'),
   }),
@@ -76,8 +106,13 @@ export const registry = [
   assignment('machinery', 'automatic', 'Resonance Machinery', 'Resonance machinery', { minute: 48 }),
   ...connectedFluidSchedules.map(([id, name, project, minute, scheduleEnabled]) => {
     const [completedAt, needsCreatorAction, commit] = connectedFluidResults[id] ?? [];
+    const branch = liquidBranches[id];
+    const exclusiveScopes = id === 'water-engine' ? ['liquids-shared-simulation', 'water-physics'] :
+      id === 'water-world' ? ['liquids-shared-presentation', branch] : [branch];
     return assignment(id, 'automatic', name, project, {
-      authority: 'Verified in the connected automation account',
+      authority: 'Creator ownership record #511', source: git(game, '/issues/511'), branch: `business/liquids/${branch}`,
+      ownershipSource: { ...liquidOwnership, owner: name.split(' — ')[0], exclusiveScopes },
+      checkpointSource: { path: `docs/liquids/checkpoints/${branch}.md` },
       minute, timezone: 'America/Chicago', scheduleEnabled, scheduleObservedAt: connectedScheduleObservedAt,
       scheduleStartsAt: `2026-11-27T20:${String(minute).padStart(2, '0')}:00Z`,
       lastSchedulerResult: completedAt ? { completedAt, needsCreatorAction, observedAt: connectedRunObservedAt,

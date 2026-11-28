@@ -1,5 +1,5 @@
-const cacheName = 'mythwrought-hq-shell-b5f9a221490efc22';
-const shell = ["./","./app.mjs","./assets/apple-touch.png","./assets/icon-192.png","./assets/icon-512.png","./automation.mjs","./command-center.mjs","./creator-notes.mjs","./dashboard.mjs","./estimates.mjs","./ideas.mjs","./index.html","./insights.mjs","./manifest.webmanifest","./model.mjs","./operations.mjs","./releases.mjs","./roadmap.mjs","./styles.css","./ui.mjs"];
+const cacheName = 'mythwrought-hq-shell-fd737ec38f2f473b';
+const shell = ["./","./app.mjs","./assets/apple-touch.png","./assets/icon-192.png","./assets/icon-512.png","./automation.mjs","./command-center.mjs","./creator-notes.mjs","./dashboard.mjs","./estimates.mjs","./ideas.mjs","./index.html","./insights.mjs","./live-github.mjs","./manifest.webmanifest","./model.mjs","./operations.mjs","./releases.mjs","./roadmap.mjs","./styles.css","./ui.mjs"];
 const shellURLs = new Set(shell.map(path => new URL(path, self.registration.scope).href));
 
 self.addEventListener('install', event => {

@@ -1,4 +1,4 @@
-import { freshState, latestFor, WORKFLOW_STATES } from './model.mjs';
+import { freshState, handoffFrom, latestFor, WORKFLOW_STATES } from './model.mjs';
 import { creatorActions } from './command-center.mjs';
 
 export const automaticSlots = 15;
@@ -30,6 +30,7 @@ export function conversationURL(value) {
 }
 
 export function continuationFor(developer, report, snapshot) {
+  if ((developer.ownershipRequired && !developer.ownership) || (snapshot && handoffFrom(snapshot, developer.assignmentId))) return null;
   const exactReport = developer.head && report?.commit === developer.head && developer.reportFeedState !== 'unavailable' ? report : null;
   if (!snapshot) return exactReport?.continuation ?? null;
   const reference = developer.publicCheckpoint;
@@ -81,6 +82,9 @@ const activeWindow = 2 * 60 * 60_000;
 
 export function assignmentStatus(snapshot, developer, now = Date.now()) {
   const status = (label, tone, basis, source) => ({ label, tone, basis, source });
+  const handoff = handoffFrom(snapshot, developer.assignmentId);
+  if (handoff) return status('Handed off', 'gold', 'Creator-approved regional handoff', handoff.source);
+  if (developer.ownershipRequired && !developer.ownership) return status('Status unknown', '', 'Creator ownership source unavailable');
   const latest = latestFor(snapshot.reports, developer.assignmentId);
   const scheduleAge = now - Date.parse(developer.scheduleObservedAt);
   const knownSchedule = scheduleAge >= 0 && scheduleAge < 24 * 60 * 60_000;

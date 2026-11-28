@@ -1,6 +1,6 @@
 # Developer reports and onboarding
 
-HQ prefers existing authorized public checkpoint comments or dedicated public HQ tracking issues. A source is enrolled by an HQ configuration change mapping one assignment to a repository, issue or pull request number, and explicitly approved GitHub publisher account IDs. Current intake reads game PRs #502 and #503 and HQ PR #1. HQ PR #1 is the checkpoint for the Development HQ assignment. Approval for a new source or an amendment to an active developer or automation belongs to the creator.
+HQ prefers existing authorized public checkpoint comments or dedicated public HQ tracking issues. A source is enrolled by an HQ configuration change mapping one assignment to a repository, issue or pull request number, and explicitly approved GitHub publisher account IDs. Structured intake reads game PRs #502, #503, #514 and #515, World Ascension issue #510, and HQ PR #1. HQ PR #1 is the reporting source for the Development HQ assignment. Approval for a new source or an amendment to an active developer or automation belongs to the creator.
 
 ## Report format
 
@@ -18,11 +18,31 @@ Use one exact marker and JSON block. The executable v1 schema is `scripts/report
 | Identity | `schemaVersion: 1`, `publish: true`, `reportId`, `developerId`, `assignmentId`, `category`, `sessionId`, `reportedAt` |
 | Source | `repository`, `branch`, full `commit`, `pull`, `issue`, `checkpoint` |
 | Progress | `outcome`, `completed`, `milestone`, `roadmapRevision`, `roadmap`, `newlyCompleted`, `quantitative`, `remaining`, `estimate`, `releaseReadiness` |
-| Coordination | `execution`, `blockers`, `dependencyIds`, `qualification`, `reusableEvidence`, `decisions`, `nextObjective`, `continuation` |
+| Coordination | `execution`, `blockers`, `dependencyIds`, `qualification`, `reusableEvidence`, `decisions`, `nextObjective`, `continuation`, `ownership`, `physicalAcceptance` |
 
 Required identity fields, repository, branch, commit, and outcome must always be present. IDs are stable lowercase letters, digits and hyphens. Dates are UTC ISO 8601. Use one of `development`, `qualification`, `administration`, `waiting`, `blocked`, or `failed` for outcome. Qualified and released quantities require their own evidence. An estimate is an object with numeric `optimistic`, `likely`, and `conservative` session ranges, `confidence`, and a `rationale`. A blocker has stable `id`, `category`, `description`, `detectedAt`, a public `evidence` URL, and optional `owner` and `resolution`. Use a new report ID for a correction. Earlier reports remain visible in history. Keep decisions under one stable decision ID across reports. Creator authorizations require a separately enrolled creator source.
 
 Examples rejected by design include an abbreviated commit, mismatched assignment, report block without `publish: true`, extra field `privateNotes`, a nonregistered publisher, or an exact commit the collector cannot tie to the enrolled branch. Secret-like values and email addresses are rejected. Text publishes to a public site. Verify that notes, prompts and links are public-safe before posting.
+
+## Creator ownership records
+
+Under [creator rule #509](https://github.com/hdog960/Mythwrought/issues/509), the optional `ownership` object records an existing explicit creator decision. The source must be enrolled for creator ownership records and the comment must come from its allowlisted creator account. Use `workspace` of `personal` or `business`, `assignmentState` of `assigned` or `unassigned`, a public accountable `owner` label (or `null` when unassigned), and `exclusiveScopes` containing stable IDs for explicitly reserved work packages. Use an empty list when there are no explicit reservations. Agree on the IDs in the canonical issue or PR before recording a reservation. HQ compares exact scope IDs or branch names within a repository and links both owner records when it finds an overlap. Page preferences remain a browser-local fallback.
+
+Record ownership in the next meaningful authorized checkpoint. The latest creator ownership record persists across ordinary progress reports and changes only when a later authenticated creator record replaces it. Keep unconfirmed workspace ownership unavailable.
+
+The existing ownership issues [#511](https://github.com/hdog960/Mythwrought/issues/511), [#512](https://github.com/hdog960/Mythwrought/issues/512), and [#513](https://github.com/hdog960/Mythwrought/issues/513) already identify the ten Business liquid lanes and two Personal lanes. The collector verifies the creator account, open issue, and reviewed body digest before displaying these records. A changed issue needs review. A newer authenticated ownership report takes precedence.
+
+## Public checkpoint links
+
+Enrolled checkpoint files and creator comments can appear on the dashboard before an assignment publishes its first structured report. Files link to the latest revision of the exact enrolled path within the verified branch history. A pinned creator comment must belong to the enrolled PR, carry the expected full SHA, and remain on the verified assignment history. HQ publishes link, date, and commit metadata. Use a structured report for ownership changes, activity claims, decisions, typed blockers, qualification, or copyable continuation text. An older checkpoint remains visible as a historical link.
+
+The linked sources cover the public #503 merge checkpoint, numbered session handoffs on the Age of Beasts, Skill and Combat branches, the World Ascension master checkpoint, and the stable checkpoint path on each of the ten Business liquid lanes. The collector finds the highest unambiguous session number inside each enrolled directory at the observed branch HEAD. New patterns or paths can be enrolled after review, and owners can publish structured reports to the existing feeds.
+
+Continue Development composes the observed branch and SHA, ownership, current directives, exact-commit checks and recorded dependencies. A matching public checkpoint enables the action even when the developer has no structured report. The prompt links that checkpoint for the next authorized objective and asks the developer to recheck GitHub before writing.
+
+## Physical iPhone receipt
+
+The creator can record test results using the optional `physicalAcceptance` object on a source enrolled for creator authorization. Include the full deployed `commit`, public release `version`, public `device` description, `result` of `passed` or `failed`, UTC `observedAt`, and a public `evidence` link. Set `final` to true only when the creator records full acceptance. Release Center checks the receipt against the verified public deployment and the test observation time. Record automated browser tests under `qualification` instead.
 
 ## Developer run status
 

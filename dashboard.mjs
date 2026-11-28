@@ -1,5 +1,6 @@
 import { actions, badge, el, link, list, muted, panel, row, rows, short, time } from './ui.mjs';
 import { blockerSummary, developerWork, workflowBuckets, workLabels, workStates, workflowLabels } from './operations.mjs';
+import { prerequisiteName } from './model.mjs';
 
 const tones = { running: 'green', queued: 'blue', waiting: 'gold', blocked: 'red', complete: 'green', failed: 'red' };
 const developerLink = developer => link(developer.name, '#developers/' + developer.id);
@@ -65,7 +66,7 @@ export function blockersPanel(snapshot, developers, expanded = false) {
     followUps.length ? el('div', 'constraints', el('h3', '', 'Automation follow-up'),
       list(followUps.map(developer => el('span', '', developerLink(developer), ' · Creator action requested in the last scheduler result')))) : null,
     constraints.length ? el('div', 'constraints', el('h3', '', 'Release constraints'), list(constraints.map(({ developer, edges }) => {
-      const prerequisites = edges.map(edge => snapshot.developers.find(item => item.assignmentId === edge.prerequisite)?.project ?? edge.prerequisite);
+      const prerequisites = edges.map(edge => prerequisiteName(snapshot, edge.prerequisite));
       return el('span', '', developerLink(developer), ' · ', link(`Waiting for ${prerequisites.join(', ')}`, edges[0].source));
     }))) : null,
     expanded ? null : actions(link('Review blockers', '#more/blockers', 'button')),

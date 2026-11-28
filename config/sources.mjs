@@ -3,12 +3,24 @@ export const hq = 'hdog960/Mythwrought-dev-hq';
 export const productionURL = 'https://hdog960.github.io/Mythwrought/';
 const gitHub = 'https://github.com';
 export const git = (repo, tail = '') => `${gitHub}/${repo}${tail}`;
+export const creatorGithubId = 343768368;
+export const creatorReleaseRecords = [
+  { assignmentId: 'unified-v1', pull: 503, comment: 7231766379, kind: 'authorization',
+    commit: 'a491202726f245cb62a7f9688c1d9528b4432a91',
+    digest: 'a964aef4b0797145c38b6150de779e0325574d331d11bc04763c3235f9fc223b' },
+];
+export const qualificationWorkflows = [
+  '.github/workflows/ci.yml', '.github/workflows/app-update.yml', '.github/workflows/age-of-beasts-native.yml',
+  '.github/workflows/age-of-beasts-desert-visual.yml', '.github/workflows/age-of-beasts-plains-visual.yml',
+  '.github/workflows/age-of-beasts-snow-visual.yml',
+];
 
 export const directives = [
   { number: 492, name: 'One world creation flow', summary: 'Route released features through the normal Create World / New World flow and preserve historical saves.' },
   { number: 498, name: 'Shared World Height', summary: 'Use the released physical world height contract of −210 through 256 within your assigned scope.' },
   { number: 501, name: 'Developer efficiency', summary: 'Reuse qualified evidence when the relevant inputs match. Run focused checks and coordinate release qualification.' },
   { number: 507, name: 'Master :00 building ownership', summary: 'Master :00 owns unfinished standalone A–D building blueprint work. The former owners’ historical work stays protected.' },
+  { number: 509, name: 'Personal and Business ownership', summary: 'Keep one accountable owner per work package across both workspaces. Preserve existing assignments and use a single production integration queue. Only the creator can authorize a transfer or resolve conflicting ownership.' },
 ];
 
 function assignment(id, category, name, project, options = {}) {
@@ -18,6 +30,47 @@ function assignment(id, category, name, project, options = {}) {
     minute: null, timezone: null, reportSources: [],
     ...options };
 }
+
+// Reviewed creator issue bodies. If an issue is edited or closed, re-review the
+// mapping before HQ continues to display its ownership as current.
+const liquidOwnership = { issue: 511, workspace: 'business',
+  digest: '6cdb7d5a0664a7a4f511420829fc5508ed7880bb88c2d37b9c526f45d67f5170' };
+const skillOwnership = { issue: 512, workspace: 'personal', owner: 'SKILL DEV', exclusiveScopes: ['path-of-mastery'],
+  digest: '576001eb3a7722ce3f09b5ecf37dfd9311d3e6f77a39f66cfca71dfac452fea7' };
+const combatOwnership = { issue: 513, workspace: 'personal', owner: 'COMBAT DEV', exclusiveScopes: ['age-of-valor'],
+  digest: '6867fd14993b60fc431950a676f3b36c07c91c297e84207bfbf5fe6ed0cdb86e' };
+const ascensionOwnership = { issue: 510, workspace: 'business', owner: 'Business Codex',
+  exclusiveScopes: ['forgotten-sands', 'frostbound-expanse', 'enchanted-wilds', 'shattered-peaks', 'living-underworld'],
+  digest: 'a1e8d85ac5be1f56471694e9bb7d1eb4b321f0c657dd4156bc6de79d55ff9b3f' };
+const handedOffRegions = [
+  { id: 'desert', region: 'forgotten-sands', previous: [
+    ['research/forgotten-sands-p0-fast-vista-20261127', 'dcc497b4f4a335e74368970f0e0c94e021a69c4c'],
+  ] },
+  { id: 'snow', region: 'frostbound', previous: [
+    ['dev/frostbound-expanse-shared-height-20261127', '48023141f27b4052c15f6f3fd5bd3afaf44347a7'],
+  ] },
+  { id: 'enchanted', region: 'enchanted-wilds', previous: [
+    ['research/enchanted-wilds-e6-e7-landmarks-20261127', '78689b0032618a4f78a81877c3c0493bbfdd7894'],
+    ['research/enchanted-wilds-e7-materials-20261127', '86597b061d53eb18895ec956039ba61ef0e1590c'],
+  ] },
+  { id: 'mountain', region: 'shattered-peaks', previous: [
+    ['dev/shattered-peaks-sp0-sp1-20261126', 'e3e0915ff4ff953f47d3e82fb4fc2ecaf111b272'],
+  ] },
+  { id: 'cave', region: 'underworld', protectedPull: 367, previous: [
+    ['dev/living-underworld-phase49-connected-collars-20261127', '5f5a37079b852c64d327a9f65052e980568e4b9c'],
+    ['dev/living-underworld-phase50-socket-union-20261127', 'dce0ec1a195274e23d6d9510c974cd3c2fa83dbd'],
+  ] },
+];
+export const regionalHandoffs = handedOffRegions.map(item => ({
+  from: `${item.id}-v1`, to: 'world-ascension-v1', branch: `dev/business/world-ascension-${item.region}-20261127`,
+  previous: item.previous, protectedPull: item.protectedPull ?? null,
+}));
+const liquidBranches = {
+  'water-engine': 'water-core', 'lava-physics': 'lava-physics', 'acid-physics': 'acid-physics',
+  'amber-sap-physics': 'amber-sap-physics', 'liquid-resonance-physics': 'resonance-physics',
+  'water-world': 'water-content', 'lava-world': 'lava-content', 'acid-world': 'acid-content',
+  'amber-sap-world': 'amber-sap-content', 'liquid-resonance-world': 'resonance-content',
+};
 
 const connectedScheduleObservedAt = '2026-11-27T20:30:26Z';
 const connectedFluidSchedules = [
@@ -42,23 +95,41 @@ const connectedFluidResults = {
   'liquid-resonance-physics': ['2026-11-27T20:27:31.718Z', true],
 };
 
-const owner = 343768368;
+const ownerReport = (repository, number) => ({ repository, number, publishers: [creatorGithubId],
+  creatorOwnershipPublishers: [creatorGithubId], creatorAuthorizationPublishers: [creatorGithubId] });
+const checkpointComment = (comment, commit) => ({ comment, commit });
 export const registry = [
   assignment('unified', 'manual', 'Three-in-One Developer', 'Creative, Navigation & Performance', {
     authority: 'Public developer toolkit and creator PR', status: 'Release hold', priority: 1,
     branch: 'dev/unified-creative-navigation-performance-20261126', pr: 503, source: git(game, '/pull/503'),
-    reportSources: [{ repository: game, number: 503, publishers: [owner] }],
+    checkpointSource: checkpointComment(7231771302, 'a491202726f245cb62a7f9688c1d9528b4432a91'),
+    reportSources: [ownerReport(game, 503)],
   }),
   assignment('beasts', 'manual', 'Mob Developer', 'Age of Beasts', {
-    authority: 'Public developer toolkit and creator PR', status: 'Merge embargo', deferred: true,
+    authority: 'Public developer toolkit and creator PR', status: 'Merge embargo', releaseHold: true,
     branch: 'dev/age-of-beasts-ab0-ab1-20261126', pr: 502, source: git(game, '/pull/502'),
-    reportSources: [{ repository: game, number: 502, publishers: [owner] }],
+    checkpointSource: { directory: 'docs/age-of-beasts', pattern: /^AB\d+(?:_[A-Z0-9]+)*_SESSION_(\d+)\.md$/ },
+    reportSources: [ownerReport(game, 502)],
   }),
   assignment('cave', 'manual', 'Cave Developer', 'Living Underworld', { status: 'Deferred per brief' }),
   assignment('enchanted', 'manual', 'Enchanted Forest Developer', 'Enchanted Wilds', { status: 'Deferred per brief' }),
   assignment('mountain', 'manual', 'Mountain Developer', 'Shattered Peaks', { status: 'Deferred per brief' }),
   assignment('desert', 'manual', 'Desert Developer', 'Forgotten Sands', { status: 'Deferred per brief' }),
   assignment('snow', 'manual', 'Snow Developer', 'Frostbound Expanse', { status: 'Deferred per brief' }),
+  assignment('skills', 'manual', 'Skill Developer', 'Path of Mastery', {
+    authority: 'Creator assignment #512', branch: 'dev/path-of-mastery-pm0-pm2-20261127', pr: 515,
+    source: git(game, '/issues/512'), ownershipSource: skillOwnership,
+    scopePaths: /^(?:src\/path-of-mastery\/|docs\/path-of-mastery\/|tests\/path-of-mastery[^/]*\.test\.mjs$)/,
+    checkpointSource: { directory: 'docs/path-of-mastery', pattern: /^SESSION_(\d+)\.md$/ },
+    reportSources: [ownerReport(game, 515)],
+  }),
+  assignment('combat', 'manual', 'Combat Developer', 'Age of Valor', {
+    authority: 'Creator assignment #513', branch: 'dev/age-of-valor-av0-av1-20261127', pr: 514,
+    source: git(game, '/issues/513'), ownershipSource: combatOwnership,
+    scopePaths: /^(?:src\/age-of-valor\/|docs\/age-of-valor\/|tests\/age-of-valor[^/]*\.test\.mjs$)/,
+    checkpointSource: { directory: 'docs/age-of-valor', pattern: /^AV\d+(?:_AV\d+)?_SESSION_(\d+)\.md$/ },
+    reportSources: [ownerReport(game, 514)],
+  }),
   assignment('builder', 'automatic', 'Master Builder A–D', 'Standalone building blueprints', {
     authority: 'Public creator issue', minute: 0, source: git(game, '/issues/507'),
   }),
@@ -68,8 +139,13 @@ export const registry = [
   assignment('machinery', 'automatic', 'Resonance Machinery', 'Resonance machinery', { minute: 48 }),
   ...connectedFluidSchedules.map(([id, name, project, minute, scheduleEnabled]) => {
     const [completedAt, needsCreatorAction, commit] = connectedFluidResults[id] ?? [];
+    const branch = liquidBranches[id];
+    const exclusiveScopes = id === 'water-engine' ? ['liquids-shared-simulation', 'water-physics'] :
+      id === 'water-world' ? ['liquids-shared-presentation', branch] : [branch];
     return assignment(id, 'automatic', name, project, {
-      authority: 'Verified in the connected automation account',
+      authority: 'Creator ownership record #511', source: git(game, '/issues/511'), branch: `business/liquids/${branch}`,
+      ownershipSource: { ...liquidOwnership, owner: name.split(' — ')[0], exclusiveScopes },
+      checkpointSource: { path: `docs/liquids/checkpoints/${branch}.md` },
       minute, timezone: 'America/Chicago', scheduleEnabled, scheduleObservedAt: connectedScheduleObservedAt,
       scheduleStartsAt: `2026-11-27T20:${String(minute).padStart(2, '0')}:00Z`,
       lastSchedulerResult: completedAt ? { completedAt, needsCreatorAction, observedAt: connectedRunObservedAt,
@@ -79,10 +155,16 @@ export const registry = [
   assignment('floating', 'codex', 'Floating Islands', 'High-altitude terrain', {
     authority: 'Project named in creator issue and HQ brief', source: git(game, '/issues/498'),
   }),
+  assignment('world-ascension', 'codex', 'World Ascension Developer', 'World Ascension', {
+    authority: 'Creator-approved regional handoff #510', branch: 'dev/business/world-ascension-20261127',
+    source: git(game, '/issues/510'), ownershipSource: ascensionOwnership, ownershipRequired: true,
+    checkpointSource: { path: 'docs/world-ascension/WA0_CHECKPOINT.md' },
+    reportSources: [ownerReport(game, 510)],
+  }),
   assignment('hq', 'codex', 'Development HQ', 'Mythwrought development management', {
     repository: hq, authority: 'Creator commission and HQ release checkpoint', branch: 'main',
     source: git(hq, '/pull/1'),
-    reportSources: [{ repository: hq, number: 1, publishers: [owner] }],
+    reportSources: [ownerReport(hq, 1)],
   }),
 ];
 

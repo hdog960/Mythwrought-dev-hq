@@ -9,8 +9,11 @@ const snapshotFile = join(dir, 'snapshot.json');
 const publicSnapshot = 'https://hdog960.github.io/Mythwrought-dev-hq/data/snapshot.json';
 const publishFile = join(dir, 'publish');
 const [previousLocal, state] = await Promise.all([readJSON(snapshotFile), readJSON(join(dir, 'state.json'))]);
-const previous = isSnapshot(previousLocal) ? previousLocal : await publishedSnapshot();
-const { snapshot, state: nextState, canPublish } = await collect({ previous, state, token: process.env.HQ_GITHUB_TOKEN });
+const localValid = isSnapshot(previousLocal);
+const previous = localValid ? previousLocal : await publishedSnapshot();
+const { snapshot, state: nextState, canPublish } = await collect({
+  previous, state: localValid ? state : null, token: process.env.HQ_GITHUB_TOKEN,
+});
 if (!canPublish) {
   console.error(JSON.stringify(snapshot.health.sources, null, 2));
   throw new Error('No healthy core snapshot is available. Existing Pages deployment was preserved.');
@@ -33,12 +36,16 @@ console.log(JSON.stringify({ pulled: snapshot.pulls.length, issues: snapshot.iss
   production: snapshot.production.version, publish, sources: snapshot.health.sources }, null, 2));
 
 function contentFingerprint(snapshot) {
-  const { generatedAt, health, production, workflowLoad, ...content } = snapshot;
+  const { generatedAt, health, production, workflowLoad, developers, schedule, ...content } = snapshot;
   const { observedAt, ...productionIdentity } = production;
   const statuses = Object.entries(health.sources).sort(([a], [b]) => a.localeCompare(b)).map(([key, item]) => [key, item.state, item.note]);
   const workload = Object.fromEntries(Object.entries(workflowLoad ?? {}).map(([status, bucket]) =>
     [status, bucket && { total: bucket.total, runs: bucket.runs }]));
-  return createHash('sha256').update(JSON.stringify({ ...content, production: productionIdentity, workload, statuses })).digest('hex');
+  const assignments = developers.map(({ branchObservedAt, ...assignment }) => assignment);
+  // Each scheduled run sees itself before completion. The heartbeat carries new
+  // run links without publishing a fresh build solely because the run ID changed.
+  const scheduleState = { observed: Boolean(schedule?.latest), lastConclusion: schedule?.lastCompleted?.conclusion ?? null };
+  return createHash('sha256').update(JSON.stringify({ ...content, assignments, production: productionIdentity, workload, statuses, scheduleState })).digest('hex');
 }
 
 async function publishedSnapshot() {

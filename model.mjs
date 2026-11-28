@@ -6,6 +6,7 @@ export const OUTCOMES = ['development', 'qualification', 'administration', 'wait
 export const CATEGORIES = ['manual', 'automatic', 'codex'];
 export const EXECUTION_STATES = ['queued', 'running', 'waiting', 'blocked', 'complete'];
 export const WORKFLOW_STATES = ['queued', 'in_progress', 'waiting'];
+export const WORKSPACES = ['personal', 'business'];
 export const BLOCKER_TYPES = ['creator approval', 'dependency', 'required CI failure', 'CI waiting', 'merge conflict',
   'access', 'missing source', 'technical defect', 'physical iPhone', 'architecture', 'reporting', 'deferral'];
 export const APPROVAL_TYPES = ['merge', 'deployment', 'physical iPhone', 'roadmap', 'reassignment',
@@ -19,6 +20,16 @@ export const isISO = value => typeof value === 'string' && /^\d{4}-\d{2}-\d{2}T\
   && Number.isFinite(Date.parse(value));
 export const isSha = value => typeof value === 'string' && SHA.test(value);
 export const isId = value => typeof value === 'string' && ID.test(value);
+export const failedRequiredCheck = check => check.mandatory === true && !check.preserved && check.status === 'completed' &&
+  ['failure', 'error', 'timed_out', 'action_required', 'startup_failure', 'cancelled'].includes(check.conclusion);
+
+export function isOwnership(value) {
+  return isRecord(value) && WORKSPACES.includes(value.workspace) &&
+    Array.isArray(value.exclusiveScopes) && value.exclusiveScopes.length <= 30 && value.exclusiveScopes.every(isId) &&
+    new Set(value.exclusiveScopes).size === value.exclusiveScopes.length &&
+    (value.assignmentState === 'assigned' ? typeof value.owner === 'string' && Boolean(value.owner.trim()) :
+      value.assignmentState === 'unassigned' && value.owner === null && value.exclusiveScopes.length === 0);
+}
 
 export function sourceLink(value) {
   if (typeof value !== 'string' || value.length > 600) return null;
@@ -44,7 +55,27 @@ export function isSnapshot(data) {
   const records = value => Array.isArray(value) && value.every(isRecord);
   return nullable(data.mainHead, isSha) && nullable(data.health.lastAttempt, isISO) &&
     nullable(data.health.lastSuccess, isISO) && nullable(data.health.nextExpected, isISO) &&
+    nullable(data.schedule, value => isRecord(value) && Object.hasOwn(value, 'latest') &&
+      [value.latest, value.lastCompleted].every(run => nullable(run, item => isRecord(item) &&
+        isISO(item.createdAt) && sourceLink(item.source) && nullable(item.status, text) && nullable(item.conclusion, text)))) &&
     data.developers.every(item => isId(item.id) && isId(item.assignmentId) && nullable(item.head, isSha) &&
+      nullable(item.ownershipRequired, value => typeof value === 'boolean') &&
+      nullable(item.releaseHold, value => typeof value === 'boolean') &&
+      nullable(item.branchObservedAt, isISO) && nullable(item.ownership, value => isOwnership(value) &&
+        sourceLink(value.source) && isISO(value.reportedAt)) &&
+      nullable(item.publicCheckpoint, value => isRecord(value) && ['file', 'comment'].includes(value.kind) && isSha(value.commit) &&
+        isSha(value.observedHead) && isISO(value.recordedAt) && sourceLink(value.source) &&
+        nullable(value.preserved, preserved => typeof preserved === 'boolean')) &&
+      nullable(item.review, value => isRecord(value) && isSha(value.head) && sourceLink(value.source) &&
+        (value.requested === null || (Number.isSafeInteger(value.requested) && value.requested >= 0))) &&
+      nullable(item.requiredGate, value => isRecord(value) && isSha(value.head) &&
+        ['failed', 'pending', 'clear', 'unavailable'].includes(value.state) && sourceLink(value.source)) &&
+      nullable(item.changeScope, value => isRecord(value) && isSha(value.head) && isSha(value.base) && sourceLink(value.source) &&
+        typeof value.complete === 'boolean' && typeof value.policyIssue === 'string' && /^[a-f0-9]{64}$/.test(value.policyIssue) &&
+        Array.isArray(value.outside) && value.outside.length <= 15 && value.outside.every(text) &&
+        Number.isSafeInteger(value.count) && value.count >= value.outside.length &&
+        Number.isSafeInteger(value.infrastructure) && value.infrastructure >= 0 && value.infrastructure <= value.count) &&
+      nullable(item.reportFeedState, value => ['ok', 'partial', 'unavailable'].includes(value)) &&
       nullable(item.scheduleEnabled, value => typeof value === 'boolean') &&
       nullable(item.scheduleObservedAt, isISO) && nullable(item.scheduleStartsAt, isISO) &&
       nullable(item.lastSchedulerResult, value => isRecord(value) && isISO(value.completedAt) && isISO(value.observedAt) &&
@@ -53,6 +84,11 @@ export function isSnapshot(data) {
       CATEGORIES.includes(item.category) && text(item.name) && text(item.project) && text(item.authority) && text(item.status)) &&
     data.reports.every(item => isId(item.reportId) && isId(item.assignmentId) &&
       isISO(item.reportedAt) && isSha(item.commit) && OUTCOMES.includes(item.outcome) &&
+      nullable(item.ownership, isOwnership) &&
+      nullable(item.physicalAcceptance, value => isRecord(value) && isSha(value.commit) &&
+        text(value.version) && text(value.device) && ['passed', 'failed'].includes(value.result) &&
+        nullable(value.final, flag => typeof flag === 'boolean' && (!flag || value.result === 'passed')) &&
+        isISO(value.observedAt) && sourceLink(value.evidence)) &&
       nullable(item.completed, value => Array.isArray(value) && value.every(text)) &&
       nullable(item.remaining, value => Array.isArray(value) && value.every(text)) &&
       nullable(item.roadmap, value => isRecord(value) && isId(value.revision) && records(value.milestones) &&
@@ -72,12 +108,32 @@ export function isSnapshot(data) {
         isISO(bucket.observedAt) && records(bucket.runs) && bucket.runs.length <= bucket.total &&
         bucket.runs.every(item => positive(item.id) && isSha(item.head) && text(item.title) && item.status === status));
     })) &&
-    data.checks.every(item => positive(item.id) && isSha(item.head) && text(item.title)) &&
+    data.checks.every(item => positive(item.id) && isSha(item.head) && text(item.title) &&
+      nullable(item.kind, value => ['check', 'status'].includes(value))) &&
     data.deployments.every(item => positive(item.id) && isSha(item.head)) &&
     data.releases.every(item => positive(item.id) && text(item.name)) &&
     data.directives.every(item => positive(item.number) && text(item.name) && text(item.summary)) &&
     data.dependencies.every(item => isId(item.id) && isId(item.assignment) && isId(item.prerequisite) && text(item.state)) &&
-    nullable(data.production.version, text) && nullable(data.production.observedAt, isISO);
+    nullable(data.handoffs, value => records(value) && value.every(item =>
+      isId(item.from) && isId(item.to) && item.from !== item.to && text(item.branch) &&
+      isISO(item.recordedAt) && sourceLink(item.source) && nullable(item.head, isSha) &&
+      (item.head ? sourceLink(item.commitSource) : item.commitSource == null) && nullable(item.protectedPull, sourceLink) &&
+      records(item.previous) && item.previous.every(ref => text(ref.branch) && isSha(ref.head) && sourceLink(ref.source)))) &&
+    nullable(data.releaseRecords, value => records(value) && value.every(item => isId(item.assignmentId) && positive(item.pull) &&
+      item.kind === 'authorization' && isSha(item.commit) && isISO(item.recordedAt) && sourceLink(item.source))) &&
+    nullable(data.publication, value => isRecord(value) && isSha(value.head) && positive(value.deploymentId) &&
+      isSha(value.indexBlob) && value.indexBlob === data.production.indexBlob && nullable(value.deployedAt, isISO) &&
+      sourceLink(value.source) && sourceLink(value.commitSource)) &&
+    nullable(data.production.indexBlob, isSha) && nullable(data.production.version, text) && nullable(data.production.observedAt, isISO);
+}
+
+export const handoffFrom = (snapshot, assignmentId) => (snapshot.handoffs ?? []).find(item => item.from === assignmentId);
+
+export function prerequisiteName(snapshot, assignmentId) {
+  const program = snapshot.developers.find(item => item.assignmentId === assignmentId);
+  const handoff = handoffFrom(snapshot, assignmentId);
+  const owner = handoff && snapshot.developers.find(item => item.assignmentId === handoff.to)?.ownership?.owner;
+  return [program?.project ?? assignmentId, owner].filter(Boolean).join(' · ');
 }
 
 export function freshState(snapshot, age = Date.now()) {

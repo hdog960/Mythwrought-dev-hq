@@ -59,6 +59,8 @@ export function isSnapshot(data) {
       [value.latest, value.lastCompleted].every(run => nullable(run, item => isRecord(item) &&
         isISO(item.createdAt) && sourceLink(item.source) && nullable(item.status, text) && nullable(item.conclusion, text)))) &&
     data.developers.every(item => isId(item.id) && isId(item.assignmentId) && nullable(item.head, isSha) &&
+      nullable(item.ownershipRequired, value => typeof value === 'boolean') &&
+      nullable(item.releaseHold, value => typeof value === 'boolean') &&
       nullable(item.branchObservedAt, isISO) && nullable(item.ownership, value => isOwnership(value) &&
         sourceLink(value.source) && isISO(value.reportedAt)) &&
       nullable(item.publicCheckpoint, value => isRecord(value) && ['file', 'comment'].includes(value.kind) && isSha(value.commit) &&
@@ -112,12 +114,26 @@ export function isSnapshot(data) {
     data.releases.every(item => positive(item.id) && text(item.name)) &&
     data.directives.every(item => positive(item.number) && text(item.name) && text(item.summary)) &&
     data.dependencies.every(item => isId(item.id) && isId(item.assignment) && isId(item.prerequisite) && text(item.state)) &&
+    nullable(data.handoffs, value => records(value) && value.every(item =>
+      isId(item.from) && isId(item.to) && item.from !== item.to && text(item.branch) &&
+      isISO(item.recordedAt) && sourceLink(item.source) && nullable(item.head, isSha) &&
+      (item.head ? sourceLink(item.commitSource) : item.commitSource == null) && nullable(item.protectedPull, sourceLink) &&
+      records(item.previous) && item.previous.every(ref => text(ref.branch) && isSha(ref.head) && sourceLink(ref.source)))) &&
     nullable(data.releaseRecords, value => records(value) && value.every(item => isId(item.assignmentId) && positive(item.pull) &&
       item.kind === 'authorization' && isSha(item.commit) && isISO(item.recordedAt) && sourceLink(item.source))) &&
     nullable(data.publication, value => isRecord(value) && isSha(value.head) && positive(value.deploymentId) &&
       isSha(value.indexBlob) && value.indexBlob === data.production.indexBlob && nullable(value.deployedAt, isISO) &&
       sourceLink(value.source) && sourceLink(value.commitSource)) &&
     nullable(data.production.indexBlob, isSha) && nullable(data.production.version, text) && nullable(data.production.observedAt, isISO);
+}
+
+export const handoffFrom = (snapshot, assignmentId) => (snapshot.handoffs ?? []).find(item => item.from === assignmentId);
+
+export function prerequisiteName(snapshot, assignmentId) {
+  const program = snapshot.developers.find(item => item.assignmentId === assignmentId);
+  const handoff = handoffFrom(snapshot, assignmentId);
+  const owner = handoff && snapshot.developers.find(item => item.assignmentId === handoff.to)?.ownership?.owner;
+  return [program?.project ?? assignmentId, owner].filter(Boolean).join(' · ');
 }
 
 export function freshState(snapshot, age = Date.now()) {

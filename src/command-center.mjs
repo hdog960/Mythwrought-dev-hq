@@ -82,7 +82,7 @@ export function creatorActions(snapshot, scope = snapshot.developers) {
     const implementationComplete = milestones.length ? milestones.every(item => item.complete) :
       report?.completed?.length && report.remaining?.length === 0;
     if (pull && report?.releaseReadiness === 'integration' && implementationComplete &&
-        !requests.length && !blockers.length && !failures.length && !developer.deferred &&
+        !requests.length && !blockers.length && !failures.length && !developer.deferred && !developer.releaseHold &&
         !snapshot.dependencies.some(edge => edge.assignment === developer.assignmentId && edge.state === 'required')) {
       add('integration', [developer], 'Review implementation for integration', `Open PR #${pull.number}`,
         'Reported completion and verified PR', [pull.source, report.source]);
@@ -95,7 +95,11 @@ export function creatorActions(snapshot, scope = snapshot.developers) {
   const heldAssignments = new Set(items.filter(item => ['ownership', 'qualification'].includes(item.kind))
     .flatMap(item => item.developers.map(developer => developer.assignmentId)));
   for (const item of items) {
-    if (['merge', 'deployment'].includes(item.kind)) item.approvalHeld = heldAssignments.has(item.developers[0].assignmentId);
+    if (['merge', 'deployment'].includes(item.kind)) {
+      const developer = item.developers[0];
+      item.approvalHeld = developer.releaseHold === true || heldAssignments.has(developer.assignmentId) ||
+        snapshot.dependencies.some(edge => edge.assignment === developer.assignmentId && edge.state === 'required');
+    }
   }
   return items.sort((a, b) => actionGroups[a.kind].rank - actionGroups[b.kind].rank ||
     (a.developers[0].priority ?? Infinity) - (b.developers[0].priority ?? Infinity) ||

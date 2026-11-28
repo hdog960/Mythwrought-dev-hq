@@ -60,7 +60,7 @@ export function releaseOverview(snapshot) {
     const live = publication && pull.mergeCommit === publication.head;
     const stage = live ? 'Production deployed' : published ? 'Previously deployed' : pull.state === 'merged' ? 'Merged on GitHub' :
       !exact ? 'Candidate HEAD unavailable' : gate?.state === 'failed' ? 'Required qualification failed' :
-      developer.deferred ? 'Held by creator directive' : gate?.state === 'pending' ? 'Required qualification in progress' :
+      (developer.releaseHold || developer.deferred) ? 'Held by creator directive' : gate?.state === 'pending' ? 'Required qualification in progress' :
       approval ? 'Authorized for exact candidate' : request ? 'Awaiting creator approval' :
       report?.releaseReadiness === 'qualification' ? 'Qualification reported' :
       report?.releaseReadiness === 'integration' ? 'Implementation ready for integration reported' :

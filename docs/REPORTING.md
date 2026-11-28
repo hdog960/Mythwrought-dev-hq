@@ -1,6 +1,6 @@
 # Developer reports and onboarding
 
-HQ prefers existing authorized public checkpoint comments or dedicated public HQ tracking issues. A source is enrolled by an HQ configuration change mapping one assignment to a repository, issue or pull request number, and explicitly approved GitHub publisher account IDs. Structured intake reads game PRs #502, #503, #514 and #515 and HQ PR #1. HQ PR #1 is the reporting source for the Development HQ assignment. Approval for a new source or an amendment to an active developer or automation belongs to the creator.
+HQ prefers existing authorized public checkpoint comments or dedicated public HQ tracking issues. A source is enrolled by an HQ configuration change mapping one assignment to a repository, issue or pull request number, and explicitly approved GitHub publisher account IDs. Structured intake reads game PRs #502, #503, #514 and #515, World Ascension issue #510, and HQ PR #1. HQ PR #1 is the reporting source for the Development HQ assignment. Approval for a new source or an amendment to an active developer or automation belongs to the creator.
 
 ## Report format
 
@@ -36,7 +36,7 @@ The existing ownership issues [#511](https://github.com/hdog960/Mythwrought/issu
 
 Enrolled checkpoint files and creator comments can appear on the dashboard before an assignment publishes its first structured report. Files link to the latest revision of the exact enrolled path within the verified branch history. A pinned creator comment must belong to the enrolled PR, carry the expected full SHA, and remain on the verified assignment history. HQ publishes link, date, and commit metadata. Use a structured report for ownership changes, activity claims, decisions, typed blockers, qualification, or copyable continuation text. An older checkpoint remains visible as a historical link.
 
-The linked sources cover the public #503 merge checkpoint, numbered session handoffs on the Age of Beasts, Skill and Combat branches, and the stable checkpoint path on each of the ten Business liquid lanes. The collector finds the highest unambiguous session number inside each enrolled directory at the observed branch HEAD. New patterns or paths can be enrolled after review, and owners can publish structured reports to the existing feeds.
+The linked sources cover the public #503 merge checkpoint, numbered session handoffs on the Age of Beasts, Skill and Combat branches, the World Ascension master checkpoint, and the stable checkpoint path on each of the ten Business liquid lanes. The collector finds the highest unambiguous session number inside each enrolled directory at the observed branch HEAD. New patterns or paths can be enrolled after review, and owners can publish structured reports to the existing feeds.
 
 Continue Development composes the observed branch and SHA, ownership, current directives, exact-commit checks and recorded dependencies. A matching public checkpoint enables the action even when the developer has no structured report. The prompt links that checkpoint for the next authorized objective and asks the developer to recheck GitHub before writing.
 

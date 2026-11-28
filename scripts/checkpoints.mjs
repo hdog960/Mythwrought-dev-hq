@@ -86,3 +86,24 @@ export async function readCreatorReleaseRecord(spec, detail) {
   }
   return { assignmentId: spec.assignmentId, pull: spec.pull, kind: spec.kind, commit: spec.commit, source, recordedAt: item.created_at };
 }
+
+export async function collectHandoffs(registry, handoffs, ownership, detail) {
+  const enrolled = new Map(registry.map(item => [item.assignmentId, item]));
+  return (await Promise.all(handoffs.map(async record => {
+    const recipient = enrolled.get(record.to);
+    const owner = ownership.get(record.to);
+    if (!enrolled.has(record.from) || !recipient?.ownershipSource || owner?.assignmentState !== 'assigned' ||
+        owner.source !== git(recipient.repository, `/issues/${recipient.ownershipSource.issue}`)) return null;
+    let head = null;
+    try {
+      const branch = await detail(`/repos/${recipient.repository}/branches/${encodeURIComponent(record.branch)}`);
+      if (branch?.name === record.branch && isSha(branch.commit?.sha)) head = branch.commit.sha;
+    } catch { /* Keep the verified transfer when the region ref is unavailable. */ }
+    return {
+      from: record.from, to: record.to, branch: record.branch, head, source: owner.source, recordedAt: owner.reportedAt,
+      previous: record.previous.map(([branch, head]) => ({ branch, head, source: git(recipient.repository, `/commit/${head}`) })),
+      protectedPull: record.protectedPull ? git(recipient.repository, `/pull/${record.protectedPull}`) : null,
+      commitSource: head ? git(recipient.repository, `/commit/${head}`) : null,
+    };
+  }))).filter(Boolean);
+}

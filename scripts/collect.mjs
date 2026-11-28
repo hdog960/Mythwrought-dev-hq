@@ -1,8 +1,8 @@
-import { creatorGithubId, creatorReleaseRecords, dependencies, directives, game, git, hq, productionURL, qualificationWorkflows, registry } from '../config/sources.mjs';
+import { creatorGithubId, creatorReleaseRecords, dependencies, directives, game, git, hq, productionURL, qualificationWorkflows, regionalHandoffs, registry } from '../config/sources.mjs';
 import { SNAPSHOT_VERSION, WORKFLOW_STATES, isISO, isSha, isSnapshot, sourceLink } from '../src/model.mjs';
 import { createGitHub } from './github.mjs';
 import { appendReports, parseReport, publicText, reportKey } from './report.mjs';
-import { collectOwnership, readCheckpoint, readCreatorReleaseRecord } from './checkpoints.mjs';
+import { collectHandoffs, collectOwnership, readCheckpoint, readCreatorReleaseRecord } from './checkpoints.mjs';
 import { qualificationInventory, reconcileQualification, requiredChecks } from './qualification.mjs';
 import { matchProduction, observeProduction } from './publication.mjs';
 import { inspectChangeScope } from './scope.mjs';
@@ -396,6 +396,12 @@ export async function collect({ previous, state, token, fetcher = fetch, now = n
       ...report.ownership, source: report.source, reportedAt: report.reportedAt,
     });
   }
+  const handoffs = await preserve('handoffs', [], async () => {
+    const records = await collectHandoffs(registry, regionalHandoffs, ownership, detail);
+    if (!records.length) mark('handoffs', 'error', 'The reviewed creator handoff source could not be confirmed');
+    else if (records.some(record => !record.head)) mark('handoffs', 'partial', 'Some receiving regional refs could not be verified');
+    return records;
+  });
   const snapshot = { schemaVersion: SNAPSHOT_VERSION, generatedAt: attemptedAt, health,
     mainHead: head, developers: developers.map(item => {
       const statuses = feedResults.get(item.assignmentId);
@@ -408,7 +414,7 @@ export async function collect({ previous, state, token, fetcher = fetch, now = n
         review: reviews.get(item.pr) ?? null, requiredGate: requiredGates.get(item.assignmentId) ?? null };
     }),
     pulls, issues, workflows, workflowLoad: activeWorkflowLoad, checks, releases, deployments, production, publication, releaseRecords, schedule,
-    reports, directives: activeDirectives, dependencies };
+    reports, directives: activeDirectives, dependencies, handoffs };
   if (!isSnapshot(snapshot)) throw new Error('Collector produced an invalid snapshot');
   return { snapshot, state: { tags: client.tags, reportsSince }, collectionSucceeded, canPublish: Boolean(health.lastSuccess) };
 }

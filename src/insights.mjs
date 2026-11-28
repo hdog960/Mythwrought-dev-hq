@@ -134,6 +134,12 @@ export function studioTimeline(snapshot, developers, days, includeRepository = f
     if (owner) add(`owner/${developer.assignmentId}`, 'Creator ownership record', developer.project,
       owner.reportedAt, owner.source, [owner.workspace, owner.owner].filter(Boolean).join(' · '));
   }
+  const transfers = (snapshot.handoffs ?? []).filter(item => assignments.has(item.to) || assignments.has(item.from));
+  for (const handoff of transfers) {
+    const recipient = snapshot.developers.find(item => item.assignmentId === handoff.to);
+    add(`handoff/${handoff.to}/${handoff.source}`, 'Creator-approved handoff', recipient?.project ?? handoff.to,
+      handoff.recordedAt, handoff.source, `${transfers.filter(item => item.to === handoff.to && item.source === handoff.source).length} regional programs`);
+  }
   for (const record of snapshot.releaseRecords ?? []) {
     if (!assignments.has(record.assignmentId)) continue;
     add(`authorization/${record.pull}/${record.commit}`, 'Creator authorization', `PR #${record.pull}`,

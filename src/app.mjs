@@ -1,4 +1,4 @@
-import { approvalQueue, freshState, isSnapshot, latestFor } from './model.mjs';
+import { approvalQueue, freshState, handoffFrom, isSnapshot, latestFor, prerequisiteName } from './model.mjs';
 import { actions, badge, button, el, fields, header, icon, link, list, muted, panel, readLocal, row, rows, saveLocal, short, time } from './ui.mjs';
 import { remainingSessions, roadmapProgress } from './estimates.mjs';
 import { ideasPage } from './ideas.mjs';
@@ -10,6 +10,7 @@ import { actionGroups, creatorActions } from './command-center.mjs';
 import { releaseOverview } from './releases.mjs';
 import { masterRoadmap } from './roadmap.mjs';
 import { automationOverview, efficiencySignals } from './automation.mjs';
+import { liveRefreshInterval, readLiveGitHub } from './live-github.mjs';
 
 const routes = [
   ['home', 'Home', 'home'], ['developers', 'Developers', 'users'], ['roadmap', 'Roadmap', 'map'],
@@ -34,7 +35,8 @@ const categoryTone = { manual: 'blue', automatic: 'green', codex: 'purple' };
 const sourceNames = { branches: 'Game main reference', pulls: 'Pull requests', issues: 'Issues', workflows: 'Workflows',
   releases: 'GitHub releases', deployments: 'Pages deployments', production: 'Public release identity', publication: 'Public HTML and deployment match',
   releaseRecords: 'Creator release records', changeScope: 'Approved file scope comparisons', schedule: 'HQ scheduled sync runs',
-  directives: 'Creator directives', checkpoints: 'Public checkpoints', ownership: 'Creator ownership issues', reviews: 'PR review requests',
+  directives: 'Creator directives', checkpoints: 'Public checkpoints', ownership: 'Creator ownership issues',
+  handoffs: 'Creator-approved handoffs', reviews: 'PR review requests',
   'workflowLoad:queued': 'Queued workflows',
   'workflowLoad:in_progress': 'Running workflows', 'workflowLoad:waiting': 'Waiting workflows', registeredBranches: 'Registered branch HEADs', checks: 'Exact-commit checks', reports: 'Developer reports' };
 const skipLink = document.querySelector('.skip-link');
@@ -57,6 +59,9 @@ let focus = readLocal('focus', false) === true;
 let activePath = null;
 let toastTimer;
 let pendingWorker = null;
+let liveGitHub = null;
+let checkingGitHub = false;
+let lastGitHubCheck = 0;
 
 for (const [id, name, pictogram] of routes) {
   const item = link([icon(pictogram), el('span', '', name)], '#' + id, 'nav-item');
@@ -77,9 +82,13 @@ window.addEventListener('hashchange', () => {
   if (location.hash === '#main') return;
   render(true);
 });
-window.addEventListener('online', () => load());
+window.addEventListener('online', () => {
+  updateLiveGitHubPanels();
+  load();
+});
 window.addEventListener('offline', () => {
   renderStatus();
+  updateLiveGitHubPanels();
   if (activePath === 'inbox') render();
 });
 document.addEventListener('visibilitychange', () => {
@@ -171,7 +180,52 @@ async function load(manual = false) {
     const editingLocal = activePath === 'more/ideas' || activePath === 'more/notes' ||
       Boolean(main.querySelector('form[data-preferences-dirty]'));
     if (!editingLocal && (activePath === null || former?.generatedAt !== snapshot?.generatedAt || loadError !== priorError)) render();
+    if (navigator.onLine && (cached || loadError || freshState(snapshot) === 'Stale snapshot')) void checkLiveGitHub();
   }
+}
+
+async function checkLiveGitHub(manual = false) {
+  if (!navigator.onLine || checkingGitHub) return;
+  if (Date.now() < Math.max(lastGitHubCheck + liveRefreshInterval, liveGitHub?.retryAt ?? 0)) {
+    if (manual) notify('The next public GitHub check is available after the displayed time.');
+    return;
+  }
+  checkingGitHub = true;
+  lastGitHubCheck = Date.now();
+  updateLiveGitHubPanels();
+  liveGitHub = await readLiveGitHub();
+  checkingGitHub = false;
+  updateLiveGitHubPanels();
+}
+
+function updateLiveGitHubPanels() {
+  for (const section of main.querySelectorAll('[data-live-github]')) {
+    const focusControl = section.contains(document.activeElement) && document.activeElement?.tagName === 'BUTTON';
+    const updated = liveGitHubPanel(section.dataset.liveGithub === 'stale-only');
+    section.replaceWith(updated);
+    if (focusControl) updated.querySelector('button')?.focus({ preventScroll: true });
+  }
+}
+
+function liveGitHubPanel(staleOnly = false) {
+  const control = button('Check public GitHub', () => checkLiveGitHub(true));
+  control.setAttribute('aria-disabled', String(checkingGitHub || !navigator.onLine));
+  const counts = liveGitHub?.workflowCounts;
+  const count = state => String(counts?.[state] ?? 'Unavailable');
+  const next = lastGitHubCheck && new Date(Math.max(lastGitHubCheck + liveRefreshInterval, liveGitHub?.retryAt ?? 0)).toISOString();
+  const section = panel('Live GitHub activity', [
+    muted('Direct observations cover the game main branch and workflow counts. HQ decisions still use the published snapshot.'),
+    checkingGitHub ? muted('Checking public GitHub…') : null,
+    !navigator.onLine && liveGitHub ? muted('Offline. Showing the last direct check.') : null,
+    liveGitHub ? fields([['Observed', time(liveGitHub.observedAt)],
+      ['Game main', liveGitHub.mainHead ? link(short(liveGitHub.mainHead), 'https://github.com/hdog960/Mythwrought/commit/' + liveGitHub.mainHead) : 'Unavailable'],
+      ['Queued workflows', count('queued')], ['Running workflows', count('in_progress')], ['Waiting workflows', count('waiting')],
+      ['Next GitHub check available', time(next)]]) : null,
+    actions(control, link('Open GitHub Actions', 'https://github.com/hdog960/Mythwrought/actions', 'button')),
+  ], { iconName: 'signal' });
+  section.dataset.liveGithub = staleOnly ? 'stale-only' : '';
+  section.hidden = staleOnly && !cached && !loadError && freshState(snapshot) !== 'Stale snapshot';
+  return section;
 }
 
 async function checkUpdates() {
@@ -224,9 +278,11 @@ function preferences() {
   return (data && typeof data === 'object' && !Array.isArray(data)) ? data : {};
 }
 
-function scopedAssignments() {
+function scopedAssignments(includeHistorical = false) {
   const labels = Object.fromEntries(Object.entries(preferences()).map(([id, entry]) => [id, entry?.account]));
-  return scopedDevelopers(snapshot.developers, accountScope, labels);
+  const developers = includeHistorical ? snapshot.developers :
+    snapshot.developers.filter(item => !handoffFrom(snapshot, item.assignmentId));
+  return scopedDevelopers(developers, accountScope, labels);
 }
 
 function accountFilter() {
@@ -360,6 +416,7 @@ function home() {
   const notes = creatorNotes().filter(note => !note.archived).length;
   return [hero, accountFilter(), el('div', 'operations-home',
     nextAction,
+    liveGitHubPanel(true),
     focus ? null : el('div', 'team-grid', ['manual', 'codex', 'automatic'].map(category => teamPanel(category, developers))),
     el('div', 'dashboard-grid', workloadPanel(snapshot, developers), blockersPanel(snapshot, developers)),
     focus ? outcomes : el('div', 'dashboard-grid',
@@ -389,6 +446,8 @@ function developerIndex(category = 'all') {
   }));
   const available = scopedAssignments();
   const matches = available.filter(item => category === 'all' || category === item.category);
+  const historical = ['all', 'manual'].includes(category) ?
+    scopedAssignments(true).filter(item => handoffFrom(snapshot, item.assignmentId)) : [];
   const gaps = category === 'automatic' && accountScope === 'all'
     ? Math.max(0, automaticSlots - matches.length) : 0;
   const tiles = matches.map(developer => {
@@ -406,7 +465,30 @@ function developerIndex(category = 'all') {
     : 'Browse assignments by workspace. Creator records take precedence over local labels.'), accountFilter(), filterBar,
     tiles.length || gaps ? el('div', 'cards', tiles, Array.from({ length: gaps }, (_, index) =>
       el('article', 'panel empty-slot', el('h2', '', `Roster slot ${matches.length + index + 1}`), muted('Developer and schedule unverified.'))))
-      : muted('No assignments match this account filter.')];
+      : muted('No assignments match this account filter.'),
+    ...(historical.length ? [el('details', 'panel', el('summary', '', `Historical assignments · ${historical.length}`),
+      list(historical.map(item => developerLink(item, `${item.name} · ${item.project}`))))] : [])];
+}
+
+function regionalHandoffs(developer) {
+  const outgoing = handoffFrom(snapshot, developer.assignmentId);
+  const incoming = (snapshot.handoffs ?? []).filter(item => item.to === developer.assignmentId);
+  if (!outgoing && !incoming.length) return null;
+  const describe = transfer => fields([
+    ['Creator record', link('Read handoff', transfer.source)],
+    ['Receiving regional branch', transfer.head ? link(`${transfer.branch} · ${short(transfer.head)}`, transfer.commitSource) : `${transfer.branch} · HEAD unavailable`],
+    ['Preserved refs at handoff', list(transfer.previous.map(ref => link(`${ref.branch} · ${short(ref.head)}`, ref.source)))],
+    ['Protected draft', transfer.protectedPull ? link('Open historical draft', transfer.protectedPull) : 'Unavailable'],
+  ]);
+  if (outgoing) {
+    const recipient = snapshot.developers.find(item => item.assignmentId === outgoing.to);
+    return panel('Released ownership', [
+      recipient ? developerLink(recipient, `Receiving assignment · ${recipient.project}`) : null, describe(outgoing),
+    ], { iconName: 'branch' });
+  }
+  return panel('Regional programs', incoming.map(transfer =>
+    el('details', 'activity-group', el('summary', '', snapshot.developers.find(item => item.assignmentId === transfer.from)?.project ?? transfer.from),
+      describe(transfer))), { iconName: 'branch' });
 }
 
 function developerDetail(id) {
@@ -464,11 +546,12 @@ function developerDetail(id) {
   return [header(developer.name, developer.project, actions(link('All developers', '#developers', 'button'), statusBadge(developer))),
     el('div', 'main-grid', el('div', 'stack', progress, panel('Blockers and dependencies', [
       list(report?.blockers?.map(item => link(`${item.category} · ${item.description}`, item.evidence)), report && report.blockers ? 'No reported blockers' : 'Blocker status unknown'),
-      list(dependencies.map(edge => link(`${snapshot.developers.find(dep => dep.assignmentId === edge.prerequisite)?.project ?? edge.prerequisite} · ${edge.scope} · ${edge.state}`, edge.source)), 'No registered dependencies'),
+      list(dependencies.map(edge => link(`${prerequisiteName(snapshot, edge.prerequisite)} · ${edge.scope} · ${edge.state}`, edge.source)), 'No registered dependencies'),
     ], { iconName: 'warning' }), panel('Session history', reports.length ? list(reports.map(item =>
       link([time(item.reportedAt), ` · ${item.outcome} · ${short(item.commit)}`], item.source))) : muted('No verified session reports.'))),
     el('div', 'stack', panel('Source checkpoint', [
       fields([['Priority', developer.priority === 1 ? 'Creator priority' : developer.deferred ? 'Deferred per brief' : developer.status === 'Deferred per brief' ? developer.status : null],
+        ...(developer.releaseHold ? [['Release restriction', link(developer.status, developer.source)]] : []),
         ['Assignment source', developer.source ? link(developer.authority, developer.source) : developer.authority],
         ['Workspace / ownership', developer.ownership ? link(
           `${accountLabels[developer.ownership.workspace]} · ${developer.ownership.owner ?? 'Confirmed unassigned'}`,
@@ -484,7 +567,7 @@ function developerDetail(id) {
       report && !exact ? muted('Checkpoint is stale or the current HEAD is unverified.') : null,
       actions(continuationControl, openConversation(developer), developer.pr ? link('View exact-commit checks', '#more/evidence/' + developer.id, 'button') : null),
       continuation ? el('details', '', el('summary', '', 'View continuation prompt'), el('p', 'wrap-text', continuation)) : null,
-    ], { iconName: 'branch' }), developerPreferences(developer), schedule))];
+    ], { iconName: 'branch' }), regionalHandoffs(developer), developerPreferences(developer), schedule))];
 }
 
 function roadmap() {
@@ -525,7 +608,7 @@ function roadmap() {
           link(`${label(entry.assignmentId)} · ${entry.edges.length} open prerequisite ${entry.edges.length === 1 ? 'link' : 'links'}`, entry.edges[0].source))) : null,
       ], { iconName: 'signal' }),
       panel('Release dependencies', list(overview.edges.map(edge =>
-        link(`${label(edge.assignment)} depends on ${label(edge.prerequisite)} · ${edge.state}`, edge.source)), 'No registered dependencies'),
+        link(`${label(edge.assignment)} depends on ${prerequisiteName(snapshot, edge.prerequisite)} · ${edge.state}`, edge.source)), 'No registered dependencies'),
       { iconName: 'branch' }),
       panel('Local proposals', list(localProposals.map(item => String(item.title)), 'No local proposals'), { end: link('Idea Vault', '#more/ideas') })))];
 }
@@ -551,7 +634,7 @@ function commandRow(item, detailed = false) {
       ['Requested', time(decision.requestedAt)], ['Limitations', decision.limitations],
       ['Affected dependencies', decision.affected?.join(', ') || 'Unavailable']]) : null,
     authorizationText ? actions(authorizationText) : null,
-    detailed && item.approvalHeld ? muted('Resolve the linked ownership or qualification hold before authorizing.') : null,
+    detailed && item.approvalHeld ? muted('Resolve the linked release, dependency, ownership, or qualification hold before authorizing.') : null,
   ], badge(name, tone));
 }
 
@@ -592,6 +675,7 @@ function coverage() {
       ['GitHub quota remaining', healthData.rateLimit?.remaining === null ? 'Unknown' : String(healthData.rateLimit?.remaining ?? 'Unknown')],
       ['Game main', snapshot.mainHead ? el('code', '', snapshot.mainHead) : 'Unknown'],
     ]), { iconName: 'refresh' }),
+    liveGitHubPanel(),
     panel('Source health', rows(Object.entries(healthData.sources).map(([key, item]) => row(
       el('strong', '', sourceNames[key] ?? key), [time(item.lastSuccess), item.note && ' · ' + item.note],
       badge(item.state, statusBadges[item.state])))))),
@@ -708,10 +792,9 @@ function congestionPage() {
         muted('No open registered PRs in this scope have a verified HEAD.'))),
     panel('Published release constraints', pressure.constraints.length ? rows(pressure.constraints.map(edge => {
       const owner = snapshot.developers.find(item => item.assignmentId === edge.assignment);
-      const prerequisite = snapshot.developers.find(item => item.assignmentId === edge.prerequisite);
-      return row(link(`${owner?.project ?? edge.assignment} awaits ${prerequisite?.project ?? edge.prerequisite}`, edge.source), edge.scope);
+      return row(link(`${owner?.project ?? edge.assignment} awaits ${prerequisiteName(snapshot, edge.prerequisite)}`, edge.source), edge.scope);
     })) : muted('No registered release constraints in this scope.'), { iconName: 'warning' }),
-    workloadPanel(snapshot, developers, { expanded: true })];
+    liveGitHubPanel(true), workloadPanel(snapshot, developers, { expanded: true })];
 }
 
 function history() {
@@ -842,7 +925,7 @@ function render(navigate = false) {
   else if (route === 'more' && !sub) content = moreIndex();
   else if (!snapshot) content = [header('Development evidence unavailable', 'Load the published snapshot to view developer assignments and progress.'),
     panel('Snapshot status', [muted(loadError ? 'No validated snapshot is available on this device.' : 'Loading the latest published snapshot.'),
-      actions(button('Retry snapshot', () => load(true)))])];
+      actions(button('Retry snapshot', () => load(true)))]), ...(loadError ? [liveGitHubPanel()] : [])];
   else if (route === 'developers') content = !sub || Object.hasOwn(categoryName, sub) ? developerIndex(sub) : developerDetail(sub);
   else if (route === 'roadmap') content = roadmap();
   else if (route === 'inbox') content = inbox();

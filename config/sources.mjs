@@ -39,6 +39,32 @@ const skillOwnership = { issue: 512, workspace: 'personal', owner: 'SKILL DEV', 
   digest: '576001eb3a7722ce3f09b5ecf37dfd9311d3e6f77a39f66cfca71dfac452fea7' };
 const combatOwnership = { issue: 513, workspace: 'personal', owner: 'COMBAT DEV', exclusiveScopes: ['age-of-valor'],
   digest: '6867fd14993b60fc431950a676f3b36c07c91c297e84207bfbf5fe6ed0cdb86e' };
+const ascensionOwnership = { issue: 510, workspace: 'business', owner: 'Business Codex',
+  exclusiveScopes: ['forgotten-sands', 'frostbound-expanse', 'enchanted-wilds', 'shattered-peaks', 'living-underworld'],
+  digest: 'a1e8d85ac5be1f56471694e9bb7d1eb4b321f0c657dd4156bc6de79d55ff9b3f' };
+const handedOffRegions = [
+  { id: 'desert', region: 'forgotten-sands', previous: [
+    ['research/forgotten-sands-p0-fast-vista-20261127', 'dcc497b4f4a335e74368970f0e0c94e021a69c4c'],
+  ] },
+  { id: 'snow', region: 'frostbound', previous: [
+    ['dev/frostbound-expanse-shared-height-20261127', '48023141f27b4052c15f6f3fd5bd3afaf44347a7'],
+  ] },
+  { id: 'enchanted', region: 'enchanted-wilds', previous: [
+    ['research/enchanted-wilds-e6-e7-landmarks-20261127', '78689b0032618a4f78a81877c3c0493bbfdd7894'],
+    ['research/enchanted-wilds-e7-materials-20261127', '86597b061d53eb18895ec956039ba61ef0e1590c'],
+  ] },
+  { id: 'mountain', region: 'shattered-peaks', previous: [
+    ['dev/shattered-peaks-sp0-sp1-20261126', 'e3e0915ff4ff953f47d3e82fb4fc2ecaf111b272'],
+  ] },
+  { id: 'cave', region: 'underworld', protectedPull: 367, previous: [
+    ['dev/living-underworld-phase49-connected-collars-20261127', '5f5a37079b852c64d327a9f65052e980568e4b9c'],
+    ['dev/living-underworld-phase50-socket-union-20261127', 'dce0ec1a195274e23d6d9510c974cd3c2fa83dbd'],
+  ] },
+];
+export const regionalHandoffs = handedOffRegions.map(item => ({
+  from: `${item.id}-v1`, to: 'world-ascension-v1', branch: `dev/business/world-ascension-${item.region}-20261127`,
+  previous: item.previous, protectedPull: item.protectedPull ?? null,
+}));
 const liquidBranches = {
   'water-engine': 'water-core', 'lava-physics': 'lava-physics', 'acid-physics': 'acid-physics',
   'amber-sap-physics': 'amber-sap-physics', 'liquid-resonance-physics': 'resonance-physics',
@@ -80,7 +106,7 @@ export const registry = [
     reportSources: [ownerReport(game, 503)],
   }),
   assignment('beasts', 'manual', 'Mob Developer', 'Age of Beasts', {
-    authority: 'Public developer toolkit and creator PR', status: 'Merge embargo', deferred: true,
+    authority: 'Public developer toolkit and creator PR', status: 'Merge embargo', releaseHold: true,
     branch: 'dev/age-of-beasts-ab0-ab1-20261126', pr: 502, source: git(game, '/pull/502'),
     checkpointSource: { directory: 'docs/age-of-beasts', pattern: /^AB\d+(?:_[A-Z0-9]+)*_SESSION_(\d+)\.md$/ },
     reportSources: [ownerReport(game, 502)],
@@ -128,6 +154,12 @@ export const registry = [
   }),
   assignment('floating', 'codex', 'Floating Islands', 'High-altitude terrain', {
     authority: 'Project named in creator issue and HQ brief', source: git(game, '/issues/498'),
+  }),
+  assignment('world-ascension', 'codex', 'World Ascension Developer', 'World Ascension', {
+    authority: 'Creator-approved regional handoff #510', branch: 'dev/business/world-ascension-20261127',
+    source: git(game, '/issues/510'), ownershipSource: ascensionOwnership, ownershipRequired: true,
+    checkpointSource: { path: 'docs/world-ascension/WA0_CHECKPOINT.md' },
+    reportSources: [ownerReport(game, 510)],
   }),
   assignment('hq', 'codex', 'Development HQ', 'Mythwrought development management', {
     repository: hq, authority: 'Creator commission and HQ release checkpoint', branch: 'main',

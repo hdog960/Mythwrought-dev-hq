@@ -1,4 +1,5 @@
-import { latestFor, WORKFLOW_STATES } from './model.mjs';
+import { freshState, latestFor, WORKFLOW_STATES } from './model.mjs';
+import { creatorActions } from './command-center.mjs';
 
 export const automaticSlots = 15;
 export const accountLabels = { personal: 'Personal', business: 'Business', unclassified: 'Unclassified' };
@@ -10,7 +11,7 @@ export const workLabels = {
 export const workflowLabels = { queued: 'Queued', in_progress: 'Running', waiting: 'Waiting' };
 
 export function accountOf(developer, labels) {
-  const label = labels?.[developer.id];
+  const label = developer.ownership?.workspace ?? labels?.[developer.id];
   return label && Object.hasOwn(accountLabels, label) ? label : 'unclassified';
 }
 
@@ -43,16 +44,58 @@ export function workflowBuckets(snapshot) {
 
 const activeWindow = 2 * 60 * 60_000;
 
+export function assignmentStatus(snapshot, developer, now = Date.now()) {
+  const status = (label, tone, basis, source) => ({ label, tone, basis, source });
+  const latest = latestFor(snapshot.reports, developer.assignmentId);
+  const scheduleAge = now - Date.parse(developer.scheduleObservedAt);
+  const knownSchedule = scheduleAge >= 0 && scheduleAge < 24 * 60 * 60_000;
+  if (developer.deferred || developer.status === 'Deferred per brief') {
+    return status('Paused', 'gold', developer.status, developer.source);
+  }
+  if (freshState(snapshot, now) !== 'Stale snapshot') {
+    const actions = creatorActions(snapshot, [developer]);
+    const blocking = actions.find(item => ['ownership', 'qualification', 'engineering'].includes(item.kind));
+    if (blocking) return status('Blocked', 'red', blocking.provenance, blocking.sources[0]);
+    const request = actions.find(item => item.decision);
+    if (request) return status('Awaiting creator approval', 'gold', request.provenance, request.sources[0]);
+    const exactReport = developer.head && latest?.commit === developer.head && developer.reportFeedState !== 'unavailable';
+    if (exactReport) {
+      const dependency = snapshot.dependencies.find(edge => edge.assignment === developer.assignmentId &&
+        edge.state === 'required' && latest.dependencyIds?.includes(edge.id));
+      if (dependency) return status('Awaiting another developer', 'gold', dependency.scope, dependency.source);
+      const executionAge = now - Date.parse(latest.execution?.observedAt);
+      if (latest.execution?.state === 'running' && executionAge >= 0 && executionAge <= activeWindow) {
+        return status('Developing', 'green', 'Recent developer execution report', latest.execution.evidence);
+      }
+      if (latest.releaseReadiness === 'fully accepted') return status('Completed', 'green', 'Accepted status reported', latest.source);
+    }
+    const active = workflowBuckets(snapshot).find(item => item.status === 'in_progress' && !item.preserved)?.runs ?? [];
+    const test = developer.head && developer.repository.toLowerCase() === 'hdog960/mythwrought' && active.find(item =>
+      item.qualification === true && item.head === developer.head && item.branch === developer.branch);
+    if (test) return status('Testing', 'blue', 'GitHub workflow running on the exact commit', test.source);
+    if (knownSchedule && developer.scheduleEnabled === false) return status('Paused', 'gold', 'Scheduler configuration when checked');
+    if (knownSchedule && developer.scheduleEnabled === true) return status('Scheduled', 'purple', 'Scheduler configuration when checked');
+    if (exactReport && latest.nextObjective && latest.blockers?.length === 0 &&
+        !['running', 'queued', 'waiting', 'blocked'].includes(latest.execution?.state) &&
+        ['development', 'qualification'].includes(latest.outcome)) {
+      return status('Ready to continue', 'green', 'Exact-commit checkpoint with a reported next objective', latest.source);
+    }
+  }
+  if (knownSchedule && developer.scheduleEnabled === false) return status('Paused', 'gold', 'Scheduler configuration when checked');
+  return status('Status unknown', '', 'Current execution or checkpoint evidence unavailable');
+}
+
 export function developerWork(snapshot, developers = snapshot.developers, now = Date.now()) {
-  const runs = workflowBuckets(snapshot).flatMap(bucket => bucket.runs);
+  const runs = workflowBuckets(snapshot).filter(bucket => !bucket.preserved).flatMap(bucket => bucket.runs);
   return developers.map(developer => {
     const report = latestFor(snapshot.reports, developer.assignmentId);
     const observed = report?.execution;
     const age = observed ? now - Date.parse(observed.observedAt) : Infinity;
-    const current = observed && age >= 0 && age <= activeWindow;
+    const current = observed && developer.head === report.commit && developer.reportFeedState !== 'unavailable' &&
+      age >= 0 && age <= activeWindow;
     const deferred = developer.deferred || developer.status === 'Deferred per brief';
     const state = deferred ? 'deferred' : current ? observed.state
-      : report?.releaseReadiness === 'fully accepted' ? 'complete'
+      : report?.releaseReadiness === 'fully accepted' && developer.head === report.commit ? 'complete'
       : developer.scheduleEnabled === false ? 'paused'
       : !report && developer.lastSchedulerResult ? 'recorded'
       : !report || observed ? 'unknown'

@@ -18,11 +18,17 @@ Use one exact marker and JSON block. The executable v1 schema is `scripts/report
 | Identity | `schemaVersion: 1`, `publish: true`, `reportId`, `developerId`, `assignmentId`, `category`, `sessionId`, `reportedAt` |
 | Source | `repository`, `branch`, full `commit`, `pull`, `issue`, `checkpoint` |
 | Progress | `outcome`, `completed`, `milestone`, `roadmapRevision`, `roadmap`, `newlyCompleted`, `quantitative`, `remaining`, `estimate`, `releaseReadiness` |
-| Coordination | `execution`, `blockers`, `dependencyIds`, `qualification`, `reusableEvidence`, `decisions`, `nextObjective`, `continuation` |
+| Coordination | `execution`, `blockers`, `dependencyIds`, `qualification`, `reusableEvidence`, `decisions`, `nextObjective`, `continuation`, `ownership` |
 
 Required identity fields, repository, branch, commit, and outcome must always be present. IDs are stable lowercase letters, digits and hyphens. Dates are UTC ISO 8601. Use one of `development`, `qualification`, `administration`, `waiting`, `blocked`, or `failed` for outcome. Qualified and released quantities require their own evidence. An estimate is an object with numeric `optimistic`, `likely`, and `conservative` session ranges, `confidence`, and a `rationale`. A blocker has stable `id`, `category`, `description`, `detectedAt`, a public `evidence` URL, and optional `owner` and `resolution`. Use a new report ID for a correction. Earlier reports remain visible in history. Keep decisions under one stable decision ID across reports. Creator authorizations require a separately enrolled creator source.
 
 Examples rejected by design include an abbreviated commit, mismatched assignment, report block without `publish: true`, extra field `privateNotes`, a nonregistered publisher, or an exact commit the collector cannot tie to the enrolled branch. Secret-like values and email addresses are rejected. Text publishes to a public site. Verify that notes, prompts and links are public-safe before posting.
+
+## Creator ownership records
+
+Under [creator rule #509](https://github.com/hdog960/Mythwrought/issues/509), the optional `ownership` object records an existing explicit creator decision. The source must be enrolled for creator ownership records and the comment must come from its allowlisted creator account. Use `workspace` of `personal` or `business`, `assignmentState` of `assigned` or `unassigned`, a public accountable `owner` label (or `null` when unassigned), and `exclusiveScopes` containing stable IDs for explicitly reserved work packages. Use an empty list when there are no explicit reservations. Agree on the IDs in the canonical issue or PR before recording a reservation. HQ compares exact scope IDs or branch names within a repository and links both owner records when it finds an overlap. Page preferences remain a browser-local fallback.
+
+Record ownership in the next meaningful authorized checkpoint. The latest creator ownership record persists across ordinary progress reports and changes only when a later authenticated creator record replaces it. Keep unconfirmed workspace ownership unavailable.
 
 ## Developer run status
 

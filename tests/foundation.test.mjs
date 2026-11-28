@@ -5,7 +5,8 @@ import { createGitHub } from '../scripts/github.mjs';
 import { appendReports, parseReport } from '../scripts/report.mjs';
 import { approvalQueue, cyclesIn, estimateFor, freshState, isSnapshot, latestFor, sourceLink } from '../src/model.mjs';
 import { registry } from '../config/sources.mjs';
-import { accountOf, continuationFor, conversationURL, developerWork, nextScheduledRun, scopedDevelopers, workflowBuckets } from '../src/operations.mjs';
+import { accountOf, assignmentStatus, continuationFor, conversationURL, developerWork, nextScheduledRun, scopedDevelopers, workflowBuckets } from '../src/operations.mjs';
+import { creatorActions } from '../src/command-center.mjs';
 
 const developer = registry[0];
 const instant = '2026-11-27T18:00:00Z';
@@ -49,14 +50,24 @@ test('Append-only reports deduplicate re-delivery and order by observed report t
   assert.equal(latestFor(history, 'unrelated'), null);
 });
 
+test('Workspace ownership requires a creator publisher and overrides local account labels', () => {
+  const ownership = { workspace: 'business', assignmentState: 'assigned', owner: 'Creative Developer', exclusiveScopes: ['world-creation'] };
+  const parsed = parseReport(markdown({ ownership }), developer, source, comment);
+  assert.deepEqual(parsed.ownership, ownership);
+  assert.equal(parseReport(markdown({ ownership }), developer, { ...source, creatorOwnershipPublishers: [] }, comment), null);
+  assert.equal(parseReport(markdown({ ownership: { ...ownership, assignmentState: 'unassigned' } }), developer, source, comment), null);
+  assert.equal(parseReport(markdown({ ownership: { ...ownership, exclusiveScopes: ['world-creation', 'world-creation'] } }), developer, source, comment), null);
+  assert.equal(accountOf({ ...developer, ownership }, { [developer.id]: 'personal' }), 'business');
+});
+
 test('Exact-commit approvals persist across unrelated reports and invalidate on a new HEAD', () => {
   const decision = { id: 'merge-1', category: 'merge', action: 'Merge candidate', reason: 'Release',
     requestedAt: instant, commit: current, state: 'requested' };
   const requested = parseReport(markdown({ decisions: [decision] }), developer, source, comment);
   const authorized = { ...decision, state: 'authorized' };
-  assert.equal(parseReport(markdown({ decisions: [authorized] }), developer, source, comment), null);
-  const second = parseReport(markdown({ reportId: 'report-2', decisions: [authorized] }), developer,
-    { ...source, creatorAuthorizationPublishers: source.publishers }, comment);
+  assert.equal(parseReport(markdown({ decisions: [authorized] }), developer,
+    { ...source, creatorAuthorizationPublishers: [] }, comment), null);
+  const second = parseReport(markdown({ reportId: 'report-2', decisions: [authorized] }), developer, source, comment);
   const newer = { ...requested, reportId: 'report-3', reportedAt: '2026-11-27T19:00:00Z', decisions: null };
   const snapshot = { developers: [{ ...developer, head: current }], reports: [requested, newer] };
   assert.equal(approvalQueue(snapshot)[0].state, 'requested');
@@ -98,6 +109,7 @@ test('Collector verifies report and pull HEAD, deduplicates, and preserves prior
   const fakePull = { number: 503, title: 'Registered draft pull', draft: true, state: 'open',
     head: { sha: current, ref: developer.branch, repo: { full_name: developer.repository } }, base: { sha: base, ref: 'main' } };
   const secondary = { ...fakePull, number: 502, head: { ...fakePull.head, ref: registry[1].branch } };
+  let partialOutage = false;
   const fakeFetch = async url => {
     const href = String(url);
     const path = new URL(href).pathname;
@@ -106,9 +118,10 @@ test('Collector verifies report and pull HEAD, deduplicates, and preserves prior
     }
     if (path === '/repos/hdog960/Mythwrought-dev-hq/branches/main') return Response.json({ commit: { sha: base } });
     if (path === '/repos/hdog960/Mythwrought-dev-hq/issues/1/comments') return Response.json([]);
+    if (path === '/repos/hdog960/Mythwrought-dev-hq/actions/workflows/hq-pages.yml/runs') return Response.json({ workflow_runs: [], total_count: 0 });
     assert.ok(href.startsWith(github));
     if (path.endsWith('/git/ref/heads/main')) return Response.json({ object: { sha: base } });
-    if (path.endsWith('/pulls/503')) return Response.json(fakePull);
+    if (path.endsWith('/pulls/503')) return partialOutage ? new Response(null, { status: 404 }) : Response.json(fakePull);
     if (path.endsWith('/pulls/502')) return Response.json(secondary);
     if (path.endsWith('/pulls')) return Response.json([fakePull, secondary]);
     if (path.endsWith('/issues/503/comments')) return Response.json(
@@ -117,10 +130,15 @@ test('Collector verifies report and pull HEAD, deduplicates, and preserves prior
         { body: markdown({ reportId: 'unrelated', commit: old }), user: { id: comment.publisher }, created_at: instant, html_url: urlFor(3) }]);
     if (path.includes('/compare/')) return Response.json({ status: 'diverged', merge_base_commit: { sha: base }, base_commit: { sha: old } });
     if (path.includes('/protection/')) return new Response(null, { status: 403 });
+    if (path.endsWith('/rules/branches/main')) return Response.json(partialOutage ? [
+      { type: 'required_status_checks', parameters: { required_status_checks: [{ context: 'Exact check', integration_id: 17 }] } },
+    ] : []);
+    if (partialOutage && decodeURIComponent(path).endsWith('/branches/' + developer.branch)) return new Response(null, { status: 404 });
     if (path.includes('/branches/')) return Response.json({ commit: { sha: current } });
     if (path.endsWith('/check-runs')) return Response.json({ check_runs: [
-      { id: 1, head_sha: current, name: 'Exact check', conclusion: 'success' },
+      { id: 1, head_sha: current, name: 'Exact check', conclusion: 'success', app: { id: 17 } },
       { id: 2, head_sha: old, name: 'Other ref', conclusion: 'failure' },
+      { id: 3, head_sha: current, name: 'Exact check', conclusion: 'failure', app: { id: 18 } },
     ] });
     if (path.endsWith('/actions/runs')) {
       const filter = new URL(href).searchParams.get('status');
@@ -146,6 +164,7 @@ test('Collector verifies report and pull HEAD, deduplicates, and preserves prior
   assert.equal(first.snapshot.health.sources['workflowLoad:queued'].state, 'partial');
   assert.equal(first.snapshot.workflowLoad.in_progress.total, 0);
   assert.equal(first.snapshot.workflowLoad.waiting, null);
+  assert.deepEqual(first.snapshot.schedule, { latest: null });
   assert.deepEqual(workflowBuckets(first.snapshot).map(item => item.total), [7, 0, null]);
   assert.ok(isSnapshot(first.snapshot));
   assert.equal(freshState(first.snapshot, Date.parse(instant) + 50 * 60_000), 'Stale snapshot');
@@ -158,7 +177,70 @@ test('Collector verifies report and pull HEAD, deduplicates, and preserves prior
   assert.deepEqual(failed.snapshot.workflowLoad, first.snapshot.workflowLoad);
   assert.equal(workflowBuckets(failed.snapshot)[0].preserved, true);
   assert.equal(failed.snapshot.health.lastSuccess, first.snapshot.health.lastSuccess);
+  assert.equal(failed.snapshot.health.sources.reports.state, 'error');
   assert.throws(() => publicVersion('<meta name="unrelated">'));
+  partialOutage = true;
+  const partial = await collect({ previous: first.snapshot, state: first.state, fetcher: fakeFetch,
+    now: new Date('2026-11-27T18:25:00Z') });
+  assert.equal(partial.snapshot.health.sources.registeredBranches.state, 'partial');
+  assert.equal(partial.snapshot.developers[0].head, null);
+  assert.equal(partial.snapshot.developers[0].branchHead, current);
+  assert.equal(partial.snapshot.developers[0].branchObservedAt, first.snapshot.generatedAt);
+  assert.equal(partial.snapshot.pulls.find(item => item.number === 503).head, current);
+  assert.equal(partial.snapshot.developers[1].branchObservedAt, partial.snapshot.generatedAt);
+  assert.equal(partial.snapshot.checks.find(item => item.id === 1).mandatory, true);
+  assert.equal(partial.snapshot.checks.find(item => item.id === 3).mandatory, null);
+});
+
+test('Creator actions group confirmed conflicts and current failures and separate missing evidence', () => {
+  const evidence = 'https://github.com/hdog960/Mythwrought/actions/runs/100';
+  const pending = { id: 'need-merge', category: 'merge', action: 'Review merge', reason: 'Candidate', commit: current,
+    requestedAt: instant, state: 'requested' };
+  const report = parseReport(markdown({
+    decisions: [pending, { ...pending, id: 'duplicate-merge' }],
+    blockers: [{ id: 'required-failure', category: 'required CI failure', description: 'Gate failed', detectedAt: instant, evidence },
+      { id: 'waiting', category: 'CI waiting', description: 'Workflow pending', detectedAt: instant, evidence }],
+  }), developer, source, comment);
+  const ownership = { workspace: 'personal', assignmentState: 'assigned', owner: 'First owner',
+    exclusiveScopes: ['world-creation', 'save-schema'], source: url, reportedAt: instant };
+  const [first, second, unassigned, unknown] = [
+    { ...developer, head: current, ownership },
+    { ...registry[1], head: current, ownership: { ...ownership, workspace: 'business', owner: 'Second owner',
+      source: registry[1].source } },
+    { ...registry[2], ownership: { ...ownership, assignmentState: 'unassigned', owner: null, exclusiveScopes: [] } },
+    registry[3],
+  ];
+  const pull = { number: first.pr, head: current, headRepositoryMatches: true, state: 'open', source: first.source };
+  const check = { number: first.pr, head: current, status: 'completed', mandatory: true,
+    conclusion: 'failure', title: 'Required check', source: evidence };
+  const snapshot = { developers: [first, second, unassigned, unknown], reports: [report], pulls: [pull], directives: [], dependencies: [],
+    checks: [check, { ...check, head: old, title: 'Old failure' }, { ...check, mandatory: null, title: 'Unknown gate' }] };
+  const queue = creatorActions(snapshot);
+  assert.deepEqual(queue.map(item => item.kind), ['ownership', 'qualification', 'merge', 'unassigned']);
+  assert.equal(queue.find(item => item.kind === 'merge').approvalHeld, true);
+  assert.equal(queue[0].developers.length, 2);
+  assert.match(queue[0].detail, /world-creation.*save-schema/);
+  assert.deepEqual(creatorActions(snapshot, [second]).map(item => item.kind), ['ownership']);
+  first.head = old;
+  assert.deepEqual(creatorActions(snapshot).map(item => item.kind), ['ownership', 'unassigned']);
+});
+
+test('Developer state needs timely direct execution, an exact-commit checkpoint or a sourced dependency', () => {
+  const now = Date.parse(instant);
+  const first = { ...developer, head: current };
+  const report = parseReport(markdown({ nextObjective: 'Integrate update', blockers: [] }), developer, source, comment);
+  const snapshot = { developers: [first], reports: [report], pulls: [], directives: [], dependencies: [], checks: [],
+    health: { lastAttempt: instant, lastSuccess: instant, sources: {} } };
+  assert.equal(assignmentStatus(snapshot, first, now).label, 'Ready to continue');
+  snapshot.dependencies.push({ id: 'requires-build', assignment: first.assignmentId, state: 'required', scope: 'Shared build', source: url });
+  report.dependencyIds = ['requires-build'];
+  assert.equal(assignmentStatus(snapshot, first, now).label, 'Awaiting another developer');
+  report.dependencyIds = null;
+  report.execution = { state: 'running', observedAt: instant, evidence: url };
+  assert.equal(assignmentStatus(snapshot, first, now).label, 'Developing');
+  assert.equal(assignmentStatus(snapshot, first, now + 46 * 60_000).label, 'Status unknown');
+  first.reportFeedState = 'unavailable';
+  assert.equal(assignmentStatus(snapshot, first, now).label, 'Status unknown');
 });
 
 test('Congestion grows with evidence, excludes deferral, and history deduplicates milestone deliveries', async () => {
@@ -222,6 +304,7 @@ test('Congestion distinguishes workflow counts from verified developer execution
   const currentWork = developerWork(snapshot, undefined, Date.parse(instant));
   assert.deepEqual(currentWork.map(item => item.state), ['running', 'unknown', 'deferred']);
   assert.equal(currentWork[0].relatedWorkflow.status, 'queued');
+  assert.equal(developerWork(snapshot, [{ ...registered, head: old }], Date.parse(instant))[0].state, 'unknown');
   assert.equal(developerWork(snapshot, undefined, Date.parse(instant) + 3 * 60 * 60_000)[0].state, 'unknown');
   assert.equal(continuationFor(registered, reported), reported.continuation);
   assert.equal(continuationFor({ ...registered, head: old }, reported), null);

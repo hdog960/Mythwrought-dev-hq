@@ -6,6 +6,7 @@ export const OUTCOMES = ['development', 'qualification', 'administration', 'wait
 export const CATEGORIES = ['manual', 'automatic', 'codex'];
 export const EXECUTION_STATES = ['queued', 'running', 'waiting', 'blocked', 'complete'];
 export const WORKFLOW_STATES = ['queued', 'in_progress', 'waiting'];
+export const WORKSPACES = ['personal', 'business'];
 export const BLOCKER_TYPES = ['creator approval', 'dependency', 'required CI failure', 'CI waiting', 'merge conflict',
   'access', 'missing source', 'technical defect', 'physical iPhone', 'architecture', 'reporting', 'deferral'];
 export const APPROVAL_TYPES = ['merge', 'deployment', 'physical iPhone', 'roadmap', 'reassignment',
@@ -19,6 +20,14 @@ export const isISO = value => typeof value === 'string' && /^\d{4}-\d{2}-\d{2}T\
   && Number.isFinite(Date.parse(value));
 export const isSha = value => typeof value === 'string' && SHA.test(value);
 export const isId = value => typeof value === 'string' && ID.test(value);
+
+export function isOwnership(value) {
+  return isRecord(value) && WORKSPACES.includes(value.workspace) &&
+    Array.isArray(value.exclusiveScopes) && value.exclusiveScopes.length <= 30 && value.exclusiveScopes.every(isId) &&
+    new Set(value.exclusiveScopes).size === value.exclusiveScopes.length &&
+    (value.assignmentState === 'assigned' ? typeof value.owner === 'string' && Boolean(value.owner.trim()) :
+      value.assignmentState === 'unassigned' && value.owner === null && value.exclusiveScopes.length === 0);
+}
 
 export function sourceLink(value) {
   if (typeof value !== 'string' || value.length > 600) return null;
@@ -44,7 +53,12 @@ export function isSnapshot(data) {
   const records = value => Array.isArray(value) && value.every(isRecord);
   return nullable(data.mainHead, isSha) && nullable(data.health.lastAttempt, isISO) &&
     nullable(data.health.lastSuccess, isISO) && nullable(data.health.nextExpected, isISO) &&
+    nullable(data.schedule, value => isRecord(value) && Object.hasOwn(value, 'latest') && nullable(value.latest, item => isRecord(item) &&
+      isISO(item.createdAt) && sourceLink(item.source) && nullable(item.status, text) && nullable(item.conclusion, text))) &&
     data.developers.every(item => isId(item.id) && isId(item.assignmentId) && nullable(item.head, isSha) &&
+      nullable(item.branchObservedAt, isISO) && nullable(item.ownership, value => isOwnership(value) &&
+        sourceLink(value.source) && isISO(value.reportedAt)) &&
+      nullable(item.reportFeedState, value => ['ok', 'partial', 'unavailable'].includes(value)) &&
       nullable(item.scheduleEnabled, value => typeof value === 'boolean') &&
       nullable(item.scheduleObservedAt, isISO) && nullable(item.scheduleStartsAt, isISO) &&
       nullable(item.lastSchedulerResult, value => isRecord(value) && isISO(value.completedAt) && isISO(value.observedAt) &&
@@ -53,6 +67,7 @@ export function isSnapshot(data) {
       CATEGORIES.includes(item.category) && text(item.name) && text(item.project) && text(item.authority) && text(item.status)) &&
     data.reports.every(item => isId(item.reportId) && isId(item.assignmentId) &&
       isISO(item.reportedAt) && isSha(item.commit) && OUTCOMES.includes(item.outcome) &&
+      nullable(item.ownership, isOwnership) &&
       nullable(item.completed, value => Array.isArray(value) && value.every(text)) &&
       nullable(item.remaining, value => Array.isArray(value) && value.every(text)) &&
       nullable(item.roadmap, value => isRecord(value) && isId(value.revision) && records(value.milestones) &&

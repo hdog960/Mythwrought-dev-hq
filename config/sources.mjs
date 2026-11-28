@@ -3,12 +3,19 @@ export const hq = 'hdog960/Mythwrought-dev-hq';
 export const productionURL = 'https://hdog960.github.io/Mythwrought/';
 const gitHub = 'https://github.com';
 export const git = (repo, tail = '') => `${gitHub}/${repo}${tail}`;
+export const creatorGithubId = 343768368;
+export const qualificationWorkflows = [
+  '.github/workflows/ci.yml', '.github/workflows/app-update.yml', '.github/workflows/age-of-beasts-native.yml',
+  '.github/workflows/age-of-beasts-desert-visual.yml', '.github/workflows/age-of-beasts-plains-visual.yml',
+  '.github/workflows/age-of-beasts-snow-visual.yml',
+];
 
 export const directives = [
   { number: 492, name: 'One world creation flow', summary: 'Route released features through the normal Create World / New World flow and preserve historical saves.' },
   { number: 498, name: 'Shared World Height', summary: 'Use the released physical world height contract of −210 through 256 within your assigned scope.' },
   { number: 501, name: 'Developer efficiency', summary: 'Reuse qualified evidence when the relevant inputs match. Run focused checks and coordinate release qualification.' },
   { number: 507, name: 'Master :00 building ownership', summary: 'Master :00 owns unfinished standalone A–D building blueprint work. The former owners’ historical work stays protected.' },
+  { number: 509, name: 'Personal and Business ownership', summary: 'Keep one accountable owner per work package across both workspaces. Preserve existing assignments and use a single production integration queue. Only the creator can authorize a transfer or resolve conflicting ownership.' },
 ];
 
 function assignment(id, category, name, project, options = {}) {
@@ -42,17 +49,18 @@ const connectedFluidResults = {
   'liquid-resonance-physics': ['2026-11-27T20:27:31.718Z', true],
 };
 
-const owner = 343768368;
+const ownerReport = (repository, number) => ({ repository, number, publishers: [creatorGithubId],
+  creatorOwnershipPublishers: [creatorGithubId], creatorAuthorizationPublishers: [creatorGithubId] });
 export const registry = [
   assignment('unified', 'manual', 'Three-in-One Developer', 'Creative, Navigation & Performance', {
     authority: 'Public developer toolkit and creator PR', status: 'Release hold', priority: 1,
     branch: 'dev/unified-creative-navigation-performance-20261126', pr: 503, source: git(game, '/pull/503'),
-    reportSources: [{ repository: game, number: 503, publishers: [owner] }],
+    reportSources: [ownerReport(game, 503)],
   }),
   assignment('beasts', 'manual', 'Mob Developer', 'Age of Beasts', {
     authority: 'Public developer toolkit and creator PR', status: 'Merge embargo', deferred: true,
     branch: 'dev/age-of-beasts-ab0-ab1-20261126', pr: 502, source: git(game, '/pull/502'),
-    reportSources: [{ repository: game, number: 502, publishers: [owner] }],
+    reportSources: [ownerReport(game, 502)],
   }),
   assignment('cave', 'manual', 'Cave Developer', 'Living Underworld', { status: 'Deferred per brief' }),
   assignment('enchanted', 'manual', 'Enchanted Forest Developer', 'Enchanted Wilds', { status: 'Deferred per brief' }),
@@ -82,7 +90,7 @@ export const registry = [
   assignment('hq', 'codex', 'Development HQ', 'Mythwrought development management', {
     repository: hq, authority: 'Creator commission and HQ release checkpoint', branch: 'main',
     source: git(hq, '/pull/1'),
-    reportSources: [{ repository: hq, number: 1, publishers: [owner] }],
+    reportSources: [ownerReport(hq, 1)],
   }),
 ];
 

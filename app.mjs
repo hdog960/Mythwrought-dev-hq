@@ -1,21 +1,27 @@
-import { approvalQueue, cyclesIn, freshState, isSnapshot, latestFor } from './model.mjs';
+import { approvalQueue, freshState, isSnapshot, latestFor } from './model.mjs';
 import { actions, badge, button, el, fields, header, icon, link, list, muted, panel, readLocal, row, rows, saveLocal, short, time } from './ui.mjs';
 import { remainingSessions, roadmapProgress } from './estimates.mjs';
 import { ideasPage } from './ideas.mjs';
-import { congestion, summarize } from './insights.mjs';
-import { accountLabels, accountOf, automaticSlots, continuationFor, conversationURL, nextScheduledRun, scopedDevelopers } from './operations.mjs';
+import { congestion, studioTimeline, summarize } from './insights.mjs';
+import { accountLabels, accountOf, assignmentStatus, automaticSlots, continuationFor, conversationURL, scopedDevelopers } from './operations.mjs';
 import { blockersPanel, workloadPanel } from './dashboard.mjs';
 import { creatorNotes, creatorNotesPage } from './creator-notes.mjs';
+import { actionGroups, creatorActions } from './command-center.mjs';
+import { releaseOverview } from './releases.mjs';
+import { masterRoadmap } from './roadmap.mjs';
+import { automationOverview, efficiencySignals } from './automation.mjs';
 
 const routes = [
   ['home', 'Home', 'home'], ['developers', 'Developers', 'users'], ['roadmap', 'Roadmap', 'map'],
-  ['inbox', 'Creator Inbox', 'inbox'], ['more', 'More', 'more'],
+  ['inbox', 'Command Center', 'inbox'], ['more', 'More', 'more'],
 ];
 const moreRoutes = [
   ['notes', 'Creator Notes', 'Private notes stored in this browser'],
-  ['congestion', 'Congestion', 'Workflow run totals and reported developer status'],
+  ['congestion', 'Congestion', 'PR reviews, required gates, dependencies, and checkpoint coverage'],
   ['blockers', 'Blockers', 'Reported impediments and release constraints'],
   ['coverage', 'Reporting coverage', 'Source freshness, synchronization, and onboarding'],
+  ['automations', 'Automation oversight', 'Scheduler evidence, recent output, and blockers'],
+  ['efficiency', 'Development efficiency', 'Repeated blockers and qualification evidence'],
   ['activity', 'GitHub activity', 'Open PRs, recently closed PRs, workflows, and issues'],
   ['releases', 'Release center', 'Public production identity and GitHub deployment history'],
   ['evidence', 'Evidence vault', 'Exact-commit checks and reported qualification'],
@@ -25,10 +31,11 @@ const moreRoutes = [
 ];
 const categoryName = { manual: 'Manual', automatic: 'Automatic', codex: 'Codex' };
 const categoryTone = { manual: 'blue', automatic: 'green', codex: 'purple' };
-const statusTone = { 'Release hold': 'orange', 'Merge embargo': 'red', 'Report connected': 'green' };
 const sourceNames = { branches: 'Game main reference', pulls: 'Pull requests', issues: 'Issues', workflows: 'Workflows',
-  releases: 'GitHub releases', deployments: 'Pages deployments', production: 'Public release identity',
-  directives: 'Creator directives', 'workflowLoad:queued': 'Queued workflows',
+  releases: 'GitHub releases', deployments: 'Pages deployments', production: 'Public release identity', publication: 'Public HTML and deployment match',
+  releaseRecords: 'Creator release records', changeScope: 'Approved file scope comparisons', schedule: 'HQ scheduled sync runs',
+  directives: 'Creator directives', checkpoints: 'Public checkpoints', ownership: 'Creator ownership issues', reviews: 'PR review requests',
+  'workflowLoad:queued': 'Queued workflows',
   'workflowLoad:in_progress': 'Running workflows', 'workflowLoad:waiting': 'Waiting workflows', registeredBranches: 'Registered branch HEADs', checks: 'Exact-commit checks', reports: 'Developer reports' };
 const skipLink = document.querySelector('.skip-link');
 const nav = document.querySelector('#navigation');
@@ -195,19 +202,19 @@ function setupWorker() {
 
 const developerLink = (developer, label = developer.project, klass) => link(label, '#developers/' + developer.id, klass);
 const reportFor = developer => latestFor(snapshot.reports, developer.assignmentId);
-const coverageOf = field => snapshot.developers.filter(developer => Array.isArray(reportFor(developer)?.[field])).length;
-const reportStatus = developer => developer.status !== 'Unknown' ? developer.status
-  : reportFor(developer) ? 'Report connected' : developer.status;
-const statusBadge = developer => badge(reportStatus(developer), statusTone[reportStatus(developer)]);
+const statusBadge = developer => {
+  const { label, tone } = assignmentStatus(snapshot, developer);
+  return badge(label, tone);
+};
 const labelFor = category => categoryName[category] ?? category;
 
 function productionPanel() {
   const production = snapshot.production;
-  const deployment = snapshot.deployments.find(item => item.state === 'success' && item.target);
+  const publication = snapshot.publication;
   return panel('Production', [
     fields([['Public build', production.version ?? 'Unknown'],
       ['Observed', time(production.observedAt)],
-      ['Latest successful public Pages deployment', deployment ? link(short(deployment.head), deployment.source) : 'Unknown']]),
+      ['Public HTML matched to Pages commit', publication ? link(short(publication.head), publication.source) : 'Unavailable']]),
     actions(link('Release center', '#more/releases', 'button')),
   ], { iconName: 'globe' });
 }
@@ -240,16 +247,16 @@ function accountFilter() {
 }
 
 function continuationButton(developer, report, primary = false) {
-  const prompt = continuationFor(developer, report);
+  const prompt = continuationFor(developer, report, snapshot);
   const control = button('Continue Development', () => {
     const current = snapshot.developers.find(item => item.id === developer.id);
     const latest = current && reportFor(current);
-    const latestPrompt = current && continuationFor(current, latest);
+    const latestPrompt = current && continuationFor(current, latest, snapshot);
     if (!latestPrompt) {
       notify('A current continuation checkpoint is unavailable.');
       return;
     }
-    copy(latestPrompt, `Checkpoint ${short(latest.commit)} copied`);
+    copy(latestPrompt, `Checkpoint ${short(current.head)} copied`);
   }, primary ? 'primary' : '');
   control.disabled = !prompt;
   return control;
@@ -265,6 +272,7 @@ function developerPreferences(developer) {
   const account = el('select', '', ...Object.entries(accountLabels).map(([value, label]) =>
     Object.assign(el('option', '', label), { value })));
   account.value = accountOf(developer, { [developer.id]: current?.account });
+  account.disabled = Boolean(developer.ownership);
   const chat = Object.assign(el('input'), { type: 'url', maxLength: 240,
     placeholder: 'https://chatgpt.com/c/…', value: conversationURL(current?.conversation) ?? '' });
   const form = el('form', '', el('label', '', 'Developer account', account),
@@ -306,23 +314,23 @@ function teamPanel(category, developers) {
       return row(developerLink(developer, developer.name), [
         developer.project, el('div', 'team-status', statusBadge(developer)),
         category === 'manual' ? actions(continuationButton(developer, report), openConversation(developer)) : null,
-        category === 'manual' && !continuationFor(developer, report) ? muted('Awaiting a verified checkpoint.') : null,
+        category === 'manual' && !continuationFor(developer, report, snapshot) ? muted('Awaiting a verified checkpoint.') : null,
         category === 'automatic' && developer.scheduleObservedAt
           ? scheduleBadge(developer) : null,
         category === 'codex' && report?.milestone ? el('span', '', `Milestone · ${report.milestone}`) : null,
       ]);
     })) : muted('No assignments match this account filter.'),
-    actions(link(`View all ${category} developers`, `#developers/${category}`, 'button')),
+    actions(link(`View all ${category} developers`, `#developers/${category}`, 'button'),
+      category === 'automatic' ? link('Automation oversight', '#more/automations', 'button') : null),
   ], { iconName: category === 'automatic' ? 'bolt' : 'users', end: count, tone: 'team-card ' + category });
 }
 
 function home() {
   const developers = scopedAssignments();
   const assignments = new Set(developers.map(item => item.assignmentId));
-  const queue = approvalQueue(snapshot).filter(item => assignments.has(item.developer.assignmentId));
+  const queue = creatorActions(snapshot, developers);
   const verified = developers.filter(reportFor).length;
   const reports = snapshot.reports.filter(item => item.outcome === 'development' && assignments.has(item.assignmentId)).slice(-4).reverse();
-  const first = queue[0];
   const focusButton = button(focus ? 'Exit Focus Mode' : 'Focus Mode', () => {
     focus = !focus;
     saveLocal('focus', focus);
@@ -337,11 +345,14 @@ function home() {
     el('div', 'hero-copy', el('h1', '', focus ? 'Creator focus' : 'Development overview'),
       el('p', '', 'See developer assignments, active workflows, and release evidence for Mythwrought.'),
       actions(focusButton)), el('div', 'hero-emblem', logo));
-  const nextAction = panel('Needs Your Decision', first ? [
-    el('h3', '', first.action), muted(first.reason), actions(link('Open Creator Inbox', '#inbox', 'button gold')),
-  ] : muted('Verified approval requests appear here when developers report them.'), {
+  const stale = cached || freshState(snapshot) === 'Stale snapshot';
+  const nextAction = panel('Creator Command Center', [
+    stale ? muted('Showing last published evidence. Review current GitHub state before acting.') : null,
+    queue.length ? rows(queue.slice(0, focus ? 5 : 3).map(commandRow)) : noCreatorActions(),
+    actions(link('Open Command Center', '#inbox', 'button gold')),
+  ], {
     iconName: 'inbox', tone: 'gold-panel creator-action',
-    end: first ? badge(String(queue.length), 'gold') : link('Reporting coverage', '#more/coverage'),
+    end: queue.length ? badge(String(queue.length), 'gold') : null,
   });
   const outcomes = panel('Recent Developer Work', reports.length ? rows(reports.map(report => row(
     link(report.completed?.[0] ?? 'Development session', report.source), time(report.reportedAt), badge('Verified report', 'green'))))
@@ -388,11 +399,11 @@ function developerIndex(category = 'all') {
       developer.category === 'automatic' && developer.scheduleObservedAt
         ? [muted(`Hourly at :${String(developer.minute).padStart(2, '0')} · ${developer.timezone}`), el('div', '', scheduleBadge(developer))] : null,
       developer.category === 'manual' ? actions(continuationButton(developer, report), openConversation(developer)) : null,
-      developer.category === 'manual' && !continuationFor(developer, report) ? muted('Awaiting a verified checkpoint.') : null);
+      developer.category === 'manual' && !continuationFor(developer, report, snapshot) ? muted('Awaiting a verified checkpoint.') : null);
   });
   return [header(teamNames[category] ?? 'Developers', category === 'automatic' && accountScope === 'all'
     ? `${matches.length} roster entries. ${matches.filter(item => item.scheduleObservedAt).length} schedules verified from the connected automation account.`
-    : 'Browse assignments. Set account labels in developer preferences.'), accountFilter(), filterBar,
+    : 'Browse assignments by workspace. Creator records take precedence over local labels.'), accountFilter(), filterBar,
     tiles.length || gaps ? el('div', 'cards', tiles, Array.from({ length: gaps }, (_, index) =>
       el('article', 'panel empty-slot', el('h2', '', `Roster slot ${matches.length + index + 1}`), muted('Developer and schedule unverified.'))))
       : muted('No assignments match this account filter.')];
@@ -408,11 +419,20 @@ function developerDetail(id) {
   const registeredRoadmap = roadmapProgress(snapshot.reports, developer.assignmentId);
   const dependencies = snapshot.dependencies.filter(edge => edge.assignment === developer.assignmentId);
   const exact = Boolean(report && developer.head && report.commit === developer.head);
+  const status = assignmentStatus(snapshot, developer);
+  const completedSessions = new Set(reports.filter(item => ['development', 'qualification', 'administration'].includes(item.outcome))
+    .map(item => item.sessionId)).size;
+  const accomplishment = reports.find(item => item.outcome === 'development' && item.completed?.length);
   const continuationControl = continuationButton(developer, report, true);
+  const continuation = continuationFor(developer, report, snapshot);
   const outcome = report ? `${report.outcome} · ${report.releaseReadiness ?? 'Release readiness unknown'}` : 'No verified report';
   const progress = panel('Progress and next work', [
-    fields([['Latest report', report ? time(report.reportedAt) : 'Unknown'], ['Outcome', outcome],
-      ['Current milestone', report?.milestone], ['Next objective', report?.nextObjective],
+    fields([['Latest authenticated report', report ? link(time(report.reportedAt), report.source) : 'Unavailable'], ['Reported outcome', outcome],
+      ['Status evidence', status.source ? link(status.basis, status.source) : status.basis],
+      ['Reported phase', report?.releaseReadiness], ['Current milestone', report?.milestone],
+      ['Latest meaningful accomplishment', accomplishment ? link(accomplishment.completed[0], accomplishment.source) : 'Unavailable'],
+      ['Completed sessions recorded', reports.length ? String(completedSessions) : 'Unavailable'],
+      ['Reported next objective', exact ? report?.nextObjective : 'Unavailable at the current commit'],
       ['Optimistic sessions', estimate ? String(estimate.optimistic) : 'Unknown'],
       ['Likely sessions', estimate ? String(estimate.likely) : 'Unknown'],
       ['Conservative sessions', estimate ? String(estimate.conservative) : 'Unknown'],
@@ -426,19 +446,20 @@ function developerDetail(id) {
       `${item.amount}${item.target === null ? '' : ` / ${item.target}`} ${item.unit} · ${item.state}`)),
   ], { iconName: 'map' });
   const recorded = developer.lastSchedulerResult;
+  const expected = automationOverview(snapshot, [developer])[0]?.next;
   const schedule = developer.category === 'automatic' ? panel('Automation reporting', [
     fields([['Hourly slot', developer.minute === null ? 'Unknown' : `:${String(developer.minute).padStart(2, '0')}${developer.scheduleObservedAt ? '' : ' · creator brief'}`],
       ['Schedule timezone', developer.timezone],
       ['Configuration when checked', developer.scheduleEnabled == null ? 'Unknown' : developer.scheduleEnabled ? 'Enabled' : 'Paused'],
       ['Schedule verified', developer.scheduleObservedAt ? time(developer.scheduleObservedAt) : 'Unknown'],
-      ['Next scheduled occurrence', developer.scheduleEnabled === false ? 'Paused' : time(nextScheduledRun(developer))],
+      ['Next scheduled occurrence', expected ? time(expected) : 'Unavailable'],
       ['Last recorded run completion', time(recorded?.completedAt)],
       ['Scheduler result checked', time(recorded?.observedAt)],
       ['Creator action on last result', recorded ? (recorded.needsCreatorAction ? 'Requested' : 'None reported') : 'Unknown'],
       ['Public output linked to last result', recorded?.publicOutput ? link('Open commit', recorded.publicOutput) : 'Unknown'],
       ['Last verified developer report', report && time(report.reportedAt)],
       ['Reported run state', report?.execution ? `${report.execution.state} · observed` : 'Unknown']]),
-    developer.scheduleEnabled === true ? muted('The next occurrence is calculated from the last verified schedule.') : null,
+    expected ? muted('The next occurrence is calculated from the last verified schedule.') : null,
   ], { iconName: 'signal' }) : null;
   return [header(developer.name, developer.project, actions(link('All developers', '#developers', 'button'), statusBadge(developer))),
     el('div', 'main-grid', el('div', 'stack', progress, panel('Blockers and dependencies', [
@@ -449,69 +470,125 @@ function developerDetail(id) {
     el('div', 'stack', panel('Source checkpoint', [
       fields([['Priority', developer.priority === 1 ? 'Creator priority' : developer.deferred ? 'Deferred per brief' : developer.status === 'Deferred per brief' ? developer.status : null],
         ['Assignment source', developer.source ? link(developer.authority, developer.source) : developer.authority],
+        ['Workspace / ownership', developer.ownership ? link(
+          `${accountLabels[developer.ownership.workspace]} · ${developer.ownership.owner ?? 'Confirmed unassigned'}`,
+          developer.ownership.source) : 'Unavailable from creator records'],
         ['Repository', developer.repository], ['Branch', developer.branch], ['Verified HEAD', developer.head ? el('code', '', developer.head) : 'Unknown'],
+        ['Branch evidence', developer.headStatus], ['Branch last observed', time(developer.branchObservedAt)],
+        ...(!developer.head && developer.branchHead ? [['Last observed branch commit', el('code', '', developer.branchHead)]] : []),
+        ['Checkpoint feed', developer.reportFeedState ?? 'No registered feed'],
         ['Pull request', candidate ? link(`#${candidate.number} · ${candidate.draft ? 'Draft' : candidate.state}`, candidate.source)
           : report?.pull ? link(`#${report.pull}`, `https://github.com/${report.repository}/pull/${report.pull}`) : 'Unknown'],
+        ['Public checkpoint', developer.publicCheckpoint ? publicCheckpointLink(developer) : 'Unavailable'],
         ['Report checkpoint', report ? link(short(report.commit), report.checkpoint ?? report.source) : 'Unknown']]),
       report && !exact ? muted('Checkpoint is stale or the current HEAD is unverified.') : null,
       actions(continuationControl, openConversation(developer), developer.pr ? link('View exact-commit checks', '#more/evidence/' + developer.id, 'button') : null),
-      exact && report.continuation ? el('details', '', el('summary', '', 'View continuation prompt'), el('p', 'wrap-text', report.continuation)) : null,
+      continuation ? el('details', '', el('summary', '', 'View continuation prompt'), el('p', 'wrap-text', continuation)) : null,
     ], { iconName: 'branch' }), developerPreferences(developer), schedule))];
 }
 
 function roadmap() {
-  const cycles = cyclesIn(snapshot.dependencies);
+  const overview = masterRoadmap(snapshot, scopedAssignments());
+  const releases = new Map(releaseOverview(snapshot).candidates.map(item => [item.developer.assignmentId, item]));
+  const label = id => snapshot.developers.find(item => item.assignmentId === id)?.project ?? id;
   const proposals = readLocal('ideas-v1', []);
   const localProposals = Array.isArray(proposals) ? proposals.filter(item => item?.proposal && !item.archived) : [];
-  return [header('Roadmap', 'Project priorities, reported milestones, and release dependencies.'),
-    el('div', 'main-grid', panel('Development programs', rows(snapshot.developers.map(developer => {
-      const latest = reportFor(developer);
-      const completed = [...new Set(snapshot.reports.filter(item => item.assignmentId === developer.assignmentId)
-        .flatMap(item => item.newlyCompleted ?? []))];
-      return row(developerLink(developer), [labelFor(developer.category),
-        latest?.milestone ? ' · ' + latest.milestone : ' · Milestone unknown',
-        completed.length ? ' · ' + completed.join(', ') : ''], statusBadge(developer));
-    })), { iconName: 'map' }),
-    el('div', 'stack', panel('Release dependencies', [
-      list(snapshot.dependencies.map(edge => {
-        const project = snapshot.developers.find(developer => developer.assignmentId === edge.assignment);
-        const prerequisite = snapshot.developers.find(developer => developer.assignmentId === edge.prerequisite);
-        return link(`${project?.project ?? edge.assignment} depends on ${prerequisite?.project ?? edge.prerequisite} · ${edge.state}`, edge.source);
-      }), 'No registered dependencies'),
-      cycles.length ? list(cycles.map(cycle => 'Circular dependency · ' + cycle)) : null,
-    ], { iconName: 'branch' }),
-    panel('Local proposals', list(localProposals.map(item => String(item.title)), 'No local proposals'), { end: link('Idea Vault', '#more/ideas') })))];
+  const critical = overview.criticalPath;
+  const phase = (title, milestones) => milestones.length ? el('section', '', el('h3', '', title),
+    list(milestones.map(item => `${item.label} · ${item.complete ? 'Complete' : 'Remaining'}`))) : null;
+  return [header('Roadmap', 'Development milestones, remaining work, and release dependencies.'), accountFilter(),
+    panel('Milestone coverage', fields([['Programs in view', String(overview.programs.length)],
+      ['Programs with milestones', String(overview.planCount)],
+      ['Milestones in reported plans', overview.milestoneCount ? `${overview.completed} / ${overview.milestoneCount} complete` : 'Unavailable']]),
+    { iconName: 'map' }),
+    el('div', 'main-grid', panel('Development programs', overview.programs.length ? overview.programs.map(({ developer, report, plan, estimate }) => {
+      const release = releases.get(developer.assignmentId);
+      const milestones = plan?.milestones ?? [];
+      return el('details', 'activity-group',
+        el('summary', '', `${developer.project} · ${milestones.length ?
+          `${milestones.filter(item => item.complete).length} / ${milestones.length} complete` : 'Milestones unavailable'}`),
+        fields([['Developer', developerLink(developer, developer.name)], ['Status', statusBadge(developer)],
+          ['Reported milestone', report?.milestone], ['Roadmap revision', plan?.revision],
+          ['Remaining sessions', estimate ? `${estimate.optimistic}–${estimate.conservative} estimated · ${estimate.confidence} confidence` : 'Unavailable'],
+          ['Release state', release ? link(release.stage, '#more/releases') : report?.releaseReadiness],
+          ['Checkpoint', developer.publicCheckpoint ? publicCheckpointLink(developer) : report ? link('Open authenticated report', report.source) : 'Unavailable']]),
+        phase('Development milestones', milestones.filter(item => item.kind === 'development')),
+        phase('Qualification milestones', milestones.filter(item => item.kind === 'qualification')));
+    }) : muted('No registered programs in this scope.'), { iconName: 'map' }),
+    el('div', 'stack',
+      panel('Critical path', [
+        critical ? [muted(`${critical.sessions} estimated work sessions along the longest registered chain.`),
+          el('ol', 'items', critical.programs.map(({ developer }) => el('li', '', developerLink(developer))))] :
+          muted('Critical-path duration is unavailable with the current dependency and estimate coverage.'),
+        overview.cycles.length ? list(overview.cycles.map(cycle => 'Circular dependency · ' + cycle)) : null,
+        overview.bottlenecks.length ? list(overview.bottlenecks.map(entry =>
+          link(`${label(entry.assignmentId)} · ${entry.edges.length} open prerequisite ${entry.edges.length === 1 ? 'link' : 'links'}`, entry.edges[0].source))) : null,
+      ], { iconName: 'signal' }),
+      panel('Release dependencies', list(overview.edges.map(edge =>
+        link(`${label(edge.assignment)} depends on ${label(edge.prerequisite)} · ${edge.state}`, edge.source)), 'No registered dependencies'),
+      { iconName: 'branch' }),
+      panel('Local proposals', list(localProposals.map(item => String(item.title)), 'No local proposals'), { end: link('Idea Vault', '#more/ideas') })))];
+}
+
+function noCreatorActions() {
+  return muted('No actions found in the available evidence. Unreported assignments may still need attention.');
+}
+
+function commandRow(item, detailed = false) {
+  const { name, tone } = actionGroups[item.kind];
+  const [first, ...additional] = item.sources;
+  const decision = item.decision;
+  const authorizationText = detailed && decision ? button('Copy authorization text', () => copy(
+    `I authorize ${decision.action}${decision.commit ? ` at exact commit ${decision.commit}` : ''} for ${decision.developer.project}. Scope: ${decision.reason}`,
+    'Authorization text copied'), 'gold') : null;
+  if (authorizationText) authorizationText.disabled = item.approvalHeld || !navigator.onLine || cached || freshState(snapshot) === 'Stale snapshot' ||
+    decision.developer.reportFeedState === 'partial' || Boolean(decision.commit && decision.developer.head !== decision.commit);
+  return row(link(item.title, first), [
+    item.developers.map(developer => developerLink(developer, developer.name)).flatMap((node, index) => index ? [' · ', node] : [node]),
+    el('div', '', item.detail), detailed ? el('div', '', item.provenance) : null,
+    detailed ? additional.map((source, index) => el('div', '', link(`Supporting evidence ${index + 1}`, source))) : null,
+    detailed && decision ? fields([['Exact commit', decision.commit ? el('code', '', decision.commit) : 'Unavailable'],
+      ['Requested', time(decision.requestedAt)], ['Limitations', decision.limitations],
+      ['Affected dependencies', decision.affected?.join(', ') || 'Unavailable']]) : null,
+    authorizationText ? actions(authorizationText) : null,
+    detailed && item.approvalHeld ? muted('Resolve the linked ownership or qualification hold before authorizing.') : null,
+  ], badge(name, tone));
 }
 
 function inbox() {
-  const queue = approvalQueue(snapshot);
-  const cards = queue.map(item => {
-    const canCopy = item.state === 'requested' && navigator.onLine && !cached && freshState(snapshot) !== 'Stale snapshot' &&
-      (!item.commit || snapshot.health.sources.registeredBranches?.state === 'ok');
-    const control = button('Copy authorization text', () => copy(
-      `I authorize ${item.action}${item.commit ? ` at exact commit ${item.commit}` : ''} for ${item.developer.project}. Scope: ${item.reason}`,
-      'Authorization text copied'), 'gold');
-    control.disabled = !canCopy;
-    return panel(item.action, [el('p', '', item.reason), fields([['Requested by', developerLink(item.developer)],
-      ['Category', item.category], ['Commit', item.commit ?? 'Unknown'], ['Requested', time(item.requestedAt)],
-      ['Limitations', item.limitations], ['Affected dependencies', item.affected?.join(', ') || 'Unknown'],
-      ['Qualification evidence', item.evidence ? link('Open evidence', item.evidence) : 'Unknown']]),
-      actions(link('Review on GitHub', item.report.source, 'button'), control)],
-    { tone: 'gold-panel', iconName: 'inbox', end: badge(item.state, 'gold') });
-  });
-  return [header('Creator Inbox', 'Review requests here and authorize them through their registered GitHub workflow.'),
-    el('div', 'stack', cards.length ? cards : panel('Decision requests',
-      muted(coverageOf('decisions') ? 'No outstanding decisions in the reports that provided decision status.' : 'Decision status is currently unknown.'),
-    { iconName: 'inbox', end: link('Reporting coverage', '#more/coverage') }))];
+  const scoped = scopedAssignments();
+  const queue = creatorActions(snapshot, scoped);
+  const stale = cached || freshState(snapshot) === 'Stale snapshot';
+  const selected = new Set(scoped.map(item => item.assignmentId));
+  const obsolete = approvalQueue(snapshot).filter(item => selected.has(item.developer.assignmentId) &&
+    ['HEAD changed', 'HEAD unverified'].includes(item.state));
+  return [header('Creator Command Center', 'Prioritized actions linked to their GitHub evidence.'), accountFilter(),
+    stale ? panel('Snapshot needs a refresh', muted('Showing last published evidence. Review current GitHub state before acting.'),
+      { iconName: 'warning' }) : null,
+    el('div', 'stack', queue.length ? Object.entries(actionGroups).flatMap(([kind, group]) => {
+      const matching = queue.filter(item => item.kind === kind);
+      return matching.length ? [panel(group.name, rows(matching.map(item => commandRow(item, true))), { iconName: 'inbox' })] : [];
+    }) : panel('Actions', noCreatorActions(), { iconName: 'inbox' }),
+    obsolete.length ? el('details', 'panel', el('summary', '', 'Requests with changed or unverified commits'),
+      rows(obsolete.map(item => row(link(item.action, item.report.source), item.developer.project, badge(item.state, 'gold'))))) : null,
+    panel('Coverage', fields([['Assignments with a developer report', `${scoped.filter(reportFor).length} / ${scoped.length}`],
+      ['Assignments with a creator ownership record', `${scoped.filter(item => item.ownership).length} / ${scoped.length}`],
+      ['Last successful collection', time(snapshot.health.lastSuccess)]]),
+    { end: link('Reporting coverage', '#more/coverage') }))].filter(Boolean);
 }
 
 function coverage() {
   const statusBadges = { ok: 'green', partial: 'gold', error: 'red' };
   const healthData = snapshot.health;
+  const scheduled = snapshot.schedule?.latest;
+  const completed = snapshot.schedule?.lastCompleted;
   return [header('Reporting coverage', 'Public GitHub metadata and developer-submitted reports have separate coverage.'),
     el('div', 'main-grid', el('div', 'stack', panel('Synchronization', fields([
       ['Last collection attempt', time(healthData.lastAttempt)], ['Last usable core collection', time(healthData.lastSuccess)],
-      ['Snapshot generated', time(snapshot.generatedAt)], ['Estimated next scheduled trigger', time(healthData.nextExpected)],
+      ['Snapshot generated', time(snapshot.generatedAt)], ['Target schedule from last collection', time(healthData.nextExpected)],
+      ['Last scheduled run', scheduled ? link([time(scheduled.createdAt), ` · ${scheduled.conclusion ?? scheduled.status ?? 'Unknown'}`], scheduled.source)
+        : healthData.sources.schedule?.state === 'ok' ? 'None recorded by GitHub' : 'Unavailable'],
+      ['Last completed scheduled run', completed ? link([time(completed.createdAt), ` · ${completed.conclusion ?? 'Unknown'}`], completed.source) : 'Unavailable'],
       ['GitHub quota remaining', healthData.rateLimit?.remaining === null ? 'Unknown' : String(healthData.rateLimit?.remaining ?? 'Unknown')],
       ['Game main', snapshot.mainHead ? el('code', '', snapshot.mainHead) : 'Unknown'],
     ]), { iconName: 'refresh' }),
@@ -520,10 +597,11 @@ function coverage() {
       badge(item.state, statusBadges[item.state])))))),
     panel('Developer coverage', rows(snapshot.developers.map(developer => {
       const confirmed = reportFor(developer);
-      const state = confirmed ? 'Connected and verified' : developer.registeredSources.length ? 'Awaiting verified report'
+      const state = confirmed ? 'Connected and verified' : developer.publicCheckpoint?.preserved ? 'Last verified checkpoint' :
+        developer.publicCheckpoint ? 'Public checkpoint linked' : developer.registeredSources.length ? 'Awaiting verified report'
         : developer.status === 'Deferred per brief' ? 'Intentionally deferred' : 'Source unconfirmed';
       return row(developerLink(developer, developer.name),
-        confirmed ? link('Open verified report', confirmed.source) : developer.authority,
+        confirmed ? link('Open verified report', confirmed.source) : developer.publicCheckpoint ? publicCheckpointLink(developer) : developer.authority,
         badge(state, confirmed && 'green'));
     })), { iconName: 'users' }))];
 }
@@ -544,16 +622,36 @@ function activity() {
 }
 
 function releases() {
-  return [header('Release center', 'Published game identity and GitHub deployment evidence.'),
-    el('div', 'main-grid', el('div', 'stack', panel('Current public identity', [
-      fields([['Version', snapshot.production.version], ['Observed', time(snapshot.production.observedAt)]]),
+  const { publication, physical, liveStage, livePull, candidates } = releaseOverview(snapshot);
+  const stale = cached || freshState(snapshot) === 'Stale snapshot';
+  return [header('Release center', 'Candidate, deployment, and device evidence for Mythwrought.'),
+    panel('Production at last observation', [
+      stale ? muted('Showing the last published snapshot. See GitHub and the public game for current state.') : null,
+      fields([['Public version', snapshot.production.version ?? 'Unavailable'], ['Observed', time(snapshot.production.observedAt)],
+        ['Public HTML matched to Pages commit', publication ? link(publication.head, publication.commitSource) : 'Unavailable'],
+        ['Pages deployment', publication ? link(`Deployment ${publication.deploymentId}`, publication.source) : 'Unavailable'],
+        ['Merged PR for public commit', livePull ? link(`#${livePull.number} · ${livePull.title}`, livePull.source) : 'Unavailable'],
+        ['Physical iPhone evidence', physical ? link([`${physical.device} · ${physical.result} · `, time(physical.recordedAt)], physical.evidence)
+          : 'No exact-build record available']]),
       actions(link('Open public game', snapshot.production.source, 'button')),
-    ], { iconName: 'globe' }),
-    panel('GitHub release tags', snapshot.releases.length ? list(snapshot.releases.map(item => link(item.name, item.source))) :
-      muted(snapshot.health.sources.releases?.state === 'ok' ? 'No GitHub releases listed in the collected window.' : 'GitHub release tags unavailable.'))),
-    panel('Recent Pages deployments', rows(snapshot.deployments.map(item => row(
-      link(`Deployment ${item.id}`, item.source), [el('code', '', short(item.head)), ' · ', time(item.updatedAt ?? item.createdAt)],
-      badge(item.state ?? 'Unknown', item.state === 'success' ? 'green' : item.state === 'failure' ? 'red' : ''))))))];
+    ], { iconName: 'globe', end: badge(liveStage, physical?.result === 'passed' ? 'green' : 'gold') }),
+    panel('Registered release candidates', candidates.length ? candidates.map(({ developer, pull, stage, report, gate, approval, request, published }) =>
+      el('details', 'activity-group', el('summary', '', `${developer.project} · ${stage}`),
+        fields([['Candidate', link(pull.head, pull.source)], ['Candidate base', el('code', '', pull.base)],
+          ['Merge commit', pull.mergeCommit ? link(pull.mergeCommit, pull.source) : 'Unavailable'],
+          ['Required checks for candidate', gate ? link(gate.state, gate.source) : 'Unavailable'],
+          ['Creator authorization', approval ? link(approval.detail, approval.source) :
+            request ? link(request.action, request.report.source) : 'Unavailable'],
+          ['Recorded successful deployment', published ? link(`Deployment ${published.id}`, published.lastSuccessSource ?? published.source) : 'Unavailable'],
+          ['Developer checkpoint', developer.publicCheckpoint ? publicCheckpointLink(developer) :
+            report ? link('Open authenticated report', report.source) : 'Unavailable']]),
+        actions(link('Exact-commit evidence', '#more/evidence/' + developer.id, 'button')))) : muted('No registered release candidates in this snapshot.'),
+    { iconName: 'branch' }),
+    el('div', 'dashboard-grid',
+      panel('GitHub release tags', list(snapshot.releases.map(item => link(item.name, item.source)), 'No release tags in the available window.')),
+      panel('Recent Pages deployments', snapshot.deployments.length ? rows(snapshot.deployments.map(item => row(
+        link(`Deployment ${item.id}`, item.source), [el('code', '', short(item.head)), ' · ', time(item.updatedAt ?? item.createdAt)],
+        badge(item.state ?? 'Unknown', item.state === 'success' ? 'green' : item.state === 'failure' ? 'red' : '')))) : muted('Deployment evidence is unavailable.')))];
 }
 
 function evidence(id) {
@@ -565,14 +663,61 @@ function evidence(id) {
   return [header('Evidence vault', developer ? developer.project : 'GitHub check metadata and reported qualification evidence.',
     developer ? actions(link('All evidence', '#more/evidence', 'button')) : null),
     el('div', 'main-grid', panel('Exact-commit GitHub checks', selected.length ? rows(selected.map(item => row(
-      link(item.title, item.source), [`PR #${item.number} · ${short(item.head)} · `, time(item.updatedAt),
-        item.mandatory === null ? ' · Requirement unknown' : item.mandatory ? ' · Required' : ' · Optional'],
+      link(item.title, item.source), [`PR #${item.number} · ${short(item.head)} · ${item.kind === 'status' ? 'Commit status' : 'Check run'} · `, time(item.updatedAt),
+        item.preserved ? ' · Preserved result, current requirement unavailable' :
+          item.mandatory === null ? ' · Requirement unknown' : item.mandatory ? ' · Required' : ' · Optional'],
       badge(item.conclusion ?? item.status ?? 'Unknown', item.conclusion === 'success' ? 'green' : '')))) : muted('No exact-commit checks available.')),
     panel('Developer-reported evidence', evidenceRows.length ? list(evidenceRows.map(item =>
       link(`${item.suite} · ${short(item.commit)} · ${item.outcome}`, item.source))) : muted('Awaiting verified developer reports.')))];
 }
 
+function publicCheckpointLink(developer) {
+  const checkpoint = developer.publicCheckpoint;
+  const state = checkpoint.preserved ? 'Last verified' : checkpoint.commit === developer.head ? 'Matches HEAD' : 'Predates HEAD';
+  const kind = checkpoint.kind === 'file' ? 'File revision' : 'Owner comment';
+  return link([`${kind} · ${short(checkpoint.commit)} · ${state} · `, time(checkpoint.recordedAt)], checkpoint.source);
+}
+
+function congestionPage() {
+  const developers = scopedAssignments();
+  const pressure = congestion(snapshot, developers);
+  const stale = cached || freshState(snapshot) === 'Stale snapshot';
+  const score = pressure.score !== null ? `${pressure.score} / 100` :
+    pressure.lower !== null ? `${pressure.lower}–${pressure.upper} / 100 possible` : 'Unavailable';
+  const draftCount = pressure.candidates.filter(item => item.pull.draft).length;
+  return [header('Congestion', 'Review queues, required gates, and verified evidence for the selected workspace.'), accountFilter(),
+    panel('Development pressure', [
+      fields([['Pressure at snapshot time', score], ['Evidence coverage', `${pressure.coverage}%`],
+        ['Assignments assessed', String(pressure.denominator)], ['Open tracked PRs', String(pressure.candidates.length)],
+        ['Tracked drafts', String(draftCount)], ['Snapshot', time(snapshot.generatedAt)]]),
+      stale ? muted('Showing the last published observation. Check GitHub for current queue activity.') : null,
+      el('details', '', el('summary', '', 'How the score works'),
+        muted('Each signal contributes its weight times the share of assessed assignments affected. The range allows for every unknown observation. Full coverage produces a single score. Intentionally deferred or accepted work is excluded from the score.')),
+    ], { iconName: 'signal' }),
+    el('div', 'dashboard-grid',
+      panel('Pressure by source', pressure.components.map(component => el('details', 'activity-group',
+        el('summary', '', `${component.label} · ${component.entries.length} observed · ${component.known} / ${pressure.denominator} covered`),
+        muted(`${component.weight} possible points. ${component.next}`),
+        component.entries.length ? rows(component.entries.map(item =>
+          row(developerLink(item.developer), link(item.detail, item.source)))) : muted('No affected assignment in the available evidence.')))),
+      panel('Tracked pull requests', pressure.candidates.length ? rows(pressure.candidates.map(({ developer, pull }) =>
+        row(link(`#${pull.number} · ${developer.project}`, pull.source),
+          pull.draft ? 'Draft' : developer.review?.requested == null ? 'Review requests unavailable' :
+            `${developer.review.requested} open review requests`,
+          badge(developer.requiredGate?.state ?? 'Required gates unavailable')))) :
+        muted('No open registered PRs in this scope have a verified HEAD.'))),
+    panel('Published release constraints', pressure.constraints.length ? rows(pressure.constraints.map(edge => {
+      const owner = snapshot.developers.find(item => item.assignmentId === edge.assignment);
+      const prerequisite = snapshot.developers.find(item => item.assignmentId === edge.prerequisite);
+      return row(link(`${owner?.project ?? edge.assignment} awaits ${prerequisite?.project ?? edge.prerequisite}`, edge.source), edge.scope);
+    })) : muted('No registered release constraints in this scope.'), { iconName: 'warning' }),
+    workloadPanel(snapshot, developers, { expanded: true })];
+}
+
 function history() {
+  const scope = scopedAssignments();
+  const ids = new Set(scope.map(item => item.assignmentId));
+  const scopedSnapshot = { ...snapshot, reports: snapshot.reports.filter(item => ids.has(item.assignmentId)) };
   const modes = [['1', 'Past day', 1], ['7', 'Past week', 7], ['30', 'Past month', 30], ['all', 'Lifetime', null]];
   const selected = el('select', '', modes.map(([value, label]) => {
     const option = el('option', '', label);
@@ -581,35 +726,90 @@ function history() {
   }));
   selected.value = '7';
   const display = el('div', 'stack');
-  const pressure = congestion(snapshot);
-  const breakdown = { technical: 'Technical and access blockers', creator: 'Creator decisions',
-    qualification: 'Mandatory qualification', dependencies: 'Dependencies', inactivity: 'Nonproductive reported sessions',
-    contention: 'CI and integration waiting' };
   function refreshHistory() {
     const mode = modes.find(([value]) => value === selected.value);
-    const data = summarize(snapshot, mode[2]);
-    const previous = mode[2] === null ? null : summarize(snapshot, mode[2],
+    const data = summarize(scopedSnapshot, mode[2]);
+    const previous = mode[2] === null ? null : summarize(scopedSnapshot, mode[2],
       Date.parse(snapshot.generatedAt) - mode[2] * 24 * 60 * 60_000 - 1);
+    const timeline = studioTimeline(snapshot, scope, mode[2], accountScope === 'all');
     display.replaceChildren(panel('Reporting summary', [
-      fields([['Window', mode[1]], ['Assignments reporting', `${data.assignments} / ${snapshot.developers.length}`],
+      fields([['Window', mode[1]], ['Assignments reporting', `${data.assignments} / ${scope.length}`],
         ['Meaningful sessions in reports', data.reports.length ? String(data.meaningful.length) : 'Unknown'],
         ['Milestones completed in reports', data.reports.length ? String(data.milestones) : 'Unknown'],
         ['Previous window: meaningful sessions', previous?.reports.length ? String(previous.meaningful.length) : 'Unknown']]),
       data.reports.length ? null : muted('No verified reports cover this period.'),
     ], { iconName: 'signal' }), panel('Creator briefing', data.accomplishments.length ?
       rows(data.accomplishments.map(({ text, item }) => row(link(text, item.source), time(item.reportedAt)))) :
-      muted('No verified accomplishments are available in this period.'), { iconName: 'book' }));
+      muted('No verified accomplishments are available in this period.'), { iconName: 'book' }),
+    panel('Studio timeline', timeline.length ? [
+      rows(timeline.slice(0, 60).map(item => row(link(item.title, item.source), [time(item.at), item.detail && ` · ${item.detail}`], badge(item.type)))),
+      timeline.length > 60 ? muted(`Showing the 60 most recent of ${timeline.length} observed events.`) : null,
+    ] : muted('No sourced events in this window.'), { iconName: 'bolt' }));
   }
   selected.addEventListener('change', refreshHistory);
   refreshHistory();
-  return [header('Development history', 'Summaries are based on validated session reports.'),
+  return [header('Development history', 'Reported accomplishments and verified GitHub events.'), accountFilter(),
     el('div', 'main-grid', el('div', 'stack', panel('Reporting window', el('label', '', 'Period', selected)), display),
-      panel('Congestion evidence', [
-        fields([['Score', pressure.score === null ? 'Unknown' : String(pressure.score)],
-          ['Evidence coverage', `${pressure.coverage}%`],
-          ['Known pressure', pressure.knownPressure === null ? 'Unknown' : String(pressure.knownPressure)]]),
-        list(pressure.components.map(component => `${breakdown[component.id]} · ${component.known} / ${pressure.denominator} covered · ${component.weight} possible points`)),
-      ], { iconName: 'signal' }))];
+      panel('Congestion evidence', actions(link('Open Congestion', '#more/congestion', 'button')), { iconName: 'signal' }))];
+}
+
+function automations() {
+  const oversight = automationOverview(snapshot, scopedAssignments());
+  return [header('Automation oversight', 'Schedules, authenticated sessions, and published repository checkpoints.'), accountFilter(),
+    panel('Automatic assignments', [
+      fields([['Roster entries in view', String(oversight.length)],
+        ['Schedules observed in the last 24 hours', String(oversight.filter(item => item.scheduleCurrent).length)],
+        ['Assignments with an authenticated report', String(oversight.filter(item => item.latest).length)]]),
+      oversight.length ? oversight.map(({ developer, latest, currentReport, accomplishments, failures, next, production }) => {
+        const recorded = developer.lastSchedulerResult;
+        const configuration = developer.scheduleEnabled == null ? 'Unavailable' : developer.scheduleEnabled ? 'Enabled when checked' : 'Paused when checked';
+        const slot = Number.isInteger(developer.minute) ? `Hourly at :${String(developer.minute).padStart(2, '0')}` : null;
+        return el('details', 'activity-group', el('summary', '', `${developer.name} · ${developer.project}`),
+          fields([['Profile', developerLink(developer, developer.name)], ['Schedule', slot ?
+            `${slot}${developer.scheduleObservedAt ? ` · ${developer.timezone}` : ' · creator brief'}` : 'Unavailable'],
+            ['Scheduler configuration', configuration], ['Configuration observed', time(developer.scheduleObservedAt)],
+            ['Next expected from last observation', next ? time(next) : 'Unavailable'],
+            ['Last scheduler completion observed', time(recorded?.completedAt)],
+            ['Last reported execution', latest?.execution ? link(time(latest.execution.observedAt), latest.execution.evidence) : 'Unavailable'],
+            ['Last report outcome', latest ? link(latest.outcome, latest.source) : 'Unavailable'],
+            ['Consecutive failed or blocked reports', failures == null ? 'Unavailable' : String(failures)],
+            ['Latest meaningful accomplishment', accomplishments ? link(accomplishments.completed[0], accomplishments.source) : 'Unavailable'],
+            ['Repository checkpoint', developer.publicCheckpoint ? publicCheckpointLink(developer) : 'Unavailable'],
+            ['Output linked by scheduler', recorded?.publicOutput ? link('Open commit', recorded.publicOutput) : 'Unavailable'],
+            ['Verified production output', production ? link(short(production.head), production.source) : 'Unavailable']]),
+          el('h3', '', 'Current reported blockers'), list(currentReport?.blockers?.map(item => link(item.description, item.evidence)),
+            currentReport?.blockers ? 'None reported at this commit.' : 'Unavailable at this commit.'));
+      }) : muted('No automation assignments in this scope.'),
+      actions(link('View development efficiency', '#more/efficiency', 'button')),
+    ], { iconName: 'bolt' })];
+}
+
+function efficiency() {
+  const developers = scopedAssignments();
+  const items = efficiencySignals(snapshot, developers);
+  const overlaps = creatorActions(snapshot, developers).filter(item => item.kind === 'ownership');
+  const rules = snapshot.directives.filter(item => [501, 509].includes(item.number));
+  const comparisons = developers.filter(item => item.head && item.changeScope?.head === item.head);
+  return [header('Development efficiency', 'Patterns in authenticated session evidence for creator review.'), accountFilter(),
+    panel('Session and qualification patterns', [
+      muted('Matching reports prompt a review of test purpose, inputs, and applicable gates.'),
+      items.length ? rows(items.map(item => row(developerLink(item.developer), [
+        el('strong', '', item.label), el('div', '', item.detail), list(item.sources.map((source, index) => link(`Evidence ${index + 1}`, source))),
+      ]))) : muted('No repeated patterns in the available structured reports.'),
+    ], { iconName: 'signal' }),
+    panel('Ownership and creator directives', [
+      overlaps.length ? rows(overlaps.map(item => commandRow(item, true))) : null,
+      list(rules.map(item => link(`#${item.number} · ${item.name}`, item.source)), 'Directives unavailable'),
+    ], { iconName: 'book' }),
+    panel('Recorded change boundaries', comparisons.length ? comparisons.map(developer => {
+      const result = developer.changeScope;
+      return el('details', 'activity-group', el('summary', '',
+        `${developer.project} · ${result.complete ? '' : 'At least '}${result.count} paths outside recorded scope`),
+        fields([['Base and candidate', link(`${short(result.base)} → ${short(result.head)}`, result.source)],
+          ['Creator ownership source', developer.ownership ? link('Read recorded boundaries', developer.ownership.source) : 'Unavailable'],
+          ['Workflow or build paths outside scope', String(result.infrastructure)]]),
+        result.outside.length ? list(result.outside) : null);
+    }) : muted('Exact change comparisons are available for assignments with reviewed file boundaries.'), { iconName: 'branch' })];
 }
 
 function directives() {
@@ -634,9 +834,7 @@ function render(navigate = false) {
   }
   document.querySelector('#current-view').textContent = routes.find(([id]) => id === route)[1];
   let content;
-  const moreView = { coverage, activity, releases, evidence, history, directives,
-    congestion: () => [header('Congestion', 'Workflow runs and developer status with source coverage.'), accountFilter(),
-      workloadPanel(snapshot, scopedAssignments(), { expanded: true })],
+  const moreView = { coverage, activity, releases, evidence, history, directives, automations, efficiency, congestion: congestionPage,
     blockers: () => [header('Blockers', 'Reported blockers and verified release constraints.'), accountFilter(),
       blockersPanel(snapshot, scopedAssignments(), true)] };
   if (route === 'more' && sub === 'ideas') content = ideasPage(notify);

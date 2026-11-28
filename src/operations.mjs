@@ -29,8 +29,43 @@ export function conversationURL(value) {
   } catch { return null; }
 }
 
-export function continuationFor(developer, report) {
-  return report?.commit === developer.head && report?.continuation ? report.continuation : null;
+export function continuationFor(developer, report, snapshot) {
+  const exactReport = developer.head && report?.commit === developer.head && developer.reportFeedState !== 'unavailable' ? report : null;
+  if (!snapshot) return exactReport?.continuation ?? null;
+  const reference = developer.publicCheckpoint;
+  const exactReference = developer.head && reference?.commit === developer.head && reference.observedHead === developer.head &&
+    !reference.preserved ? reference : null;
+  if (!developer.branch || (!exactReference && !exactReport?.continuation && !exactReport?.nextObjective && !exactReport?.checkpoint)) return null;
+  const checkpoint = exactReport?.checkpoint ?? exactReference?.source ?? exactReport.source;
+  const owners = developer.ownership;
+  const checks = snapshot.checks.filter(item => developer.pr && item.number === developer.pr && item.head === developer.head &&
+    item.mandatory === true && !item.preserved).slice(0, 10).map(item =>
+    `${item.title} (${item.conclusion ?? item.status}) ${item.source}`);
+  const reported = [...(exactReport?.qualification ?? []), ...(exactReport?.reusableEvidence ?? [])]
+    .filter(item => item.commit === developer.head).slice(0, 8).map(item => `${item.suite} (${item.outcome}) ${item.source}`);
+  const blockers = (exactReport?.blockers ?? []).slice(0, 8).map(item => `${item.category}: ${item.description} ${item.evidence}`);
+  const dependencies = snapshot.dependencies.filter(item => item.assignment === developer.assignmentId && item.state === 'required')
+    .map(item => `${item.scope}, prerequisite ${item.prerequisite} ${item.source}`);
+  const directives = snapshot.directives.filter(item => item.state === 'Creator source confirmed' &&
+    (item.number !== 507 || developer.id === 'builder')).map(item => `#${item.number} ${item.source}`);
+  return [
+    `Resume ${developer.name} on ${developer.project} (${developer.assignmentId}).`,
+    `Repository ${developer.repository}. Branch ${developer.branch}. Last observed exact HEAD ${developer.head}.`,
+    `Read the current main-branch procedures and compare GitHub's current branch and PR with this SHA before writing.`,
+    `Read the checkpoint at ${checkpoint} and verify any newer authorized checkpoint.`,
+    developer.source ? `Assignment source ${developer.source}` : null,
+    owners ? `Creator ownership: ${accountLabels[owners.workspace]} · ${owners.owner ?? 'Unassigned'}. Source ${owners.source}` :
+      'Confirm workspace and ownership using the canonical assignment.',
+    owners?.exclusiveScopes?.length ? `Recorded exclusive scopes: ${owners.exclusiveScopes.join(', ')}.` : null,
+    directives.length ? `Applicable creator directives:\n${directives.join('\n')}` : 'Find the applicable current creator directives before writing.',
+    checks.length ? `Observed required GitHub checks at this exact commit:\n${checks.join('\n')}` : null,
+    reported.length ? `Qualification evidence linked by the report:\n${reported.join('\n')}` : null,
+    blockers.length || dependencies.length ? `Recorded blockers and dependencies:\n${[...blockers, ...dependencies].join('\n')}` :
+      'Confirm current blockers in the canonical checkpoint.',
+    exactReport?.nextObjective ? `Reported next objective: ${exactReport.nextObjective}` : null,
+    exactReport?.continuation ? `Owner handoff:\n${exactReport.continuation}` : 'Follow the next authorized action documented in the checkpoint.',
+    'Keep changes within the existing ownership. Verify evidence and obtain explicit creator approval for ownership changes, merges, or deployment.',
+  ].filter(Boolean).join('\n\n');
 }
 
 export function workflowBuckets(snapshot) {

@@ -18,7 +18,7 @@ Use one exact marker and JSON block. The executable v1 schema is `scripts/report
 | Identity | `schemaVersion: 1`, `publish: true`, `reportId`, `developerId`, `assignmentId`, `category`, `sessionId`, `reportedAt` |
 | Source | `repository`, `branch`, full `commit`, `pull`, `issue`, `checkpoint` |
 | Progress | `outcome`, `completed`, `milestone`, `roadmapRevision`, `roadmap`, `newlyCompleted`, `quantitative`, `remaining`, `estimate`, `releaseReadiness` |
-| Coordination | `execution`, `blockers`, `dependencyIds`, `qualification`, `reusableEvidence`, `decisions`, `nextObjective`, `continuation`, `ownership` |
+| Coordination | `execution`, `blockers`, `dependencyIds`, `qualification`, `reusableEvidence`, `decisions`, `nextObjective`, `continuation`, `ownership`, `physicalAcceptance` |
 
 Required identity fields, repository, branch, commit, and outcome must always be present. IDs are stable lowercase letters, digits and hyphens. Dates are UTC ISO 8601. Use one of `development`, `qualification`, `administration`, `waiting`, `blocked`, or `failed` for outcome. Qualified and released quantities require their own evidence. An estimate is an object with numeric `optimistic`, `likely`, and `conservative` session ranges, `confidence`, and a `rationale`. A blocker has stable `id`, `category`, `description`, `detectedAt`, a public `evidence` URL, and optional `owner` and `resolution`. Use a new report ID for a correction. Earlier reports remain visible in history. Keep decisions under one stable decision ID across reports. Creator authorizations require a separately enrolled creator source.
 
@@ -36,7 +36,13 @@ The existing ownership issues [#511](https://github.com/hdog960/Mythwrought/issu
 
 Enrolled checkpoint files and creator comments can appear on the dashboard before an assignment publishes its first structured report. Files link to the latest revision of the exact enrolled path within the verified branch history. A pinned creator comment must belong to the enrolled PR, carry the expected full SHA, and remain on the verified assignment history. HQ publishes link, date, and commit metadata. Use a structured report for ownership changes, activity claims, decisions, typed blockers, qualification, or copyable continuation text. An older checkpoint remains visible as a historical link.
 
-The linked sources cover the public #503 merge checkpoint, the #502 session handoff, Skill and Combat owner comments, and the stable checkpoint path on each of the ten Business liquid lanes. A new session-specific path or comment can be enrolled after review, or the owner can publish a structured report to the existing feed.
+The linked sources cover the public #503 merge checkpoint, numbered session handoffs on the Age of Beasts, Skill and Combat branches, and the stable checkpoint path on each of the ten Business liquid lanes. The collector finds the highest unambiguous session number inside each enrolled directory at the observed branch HEAD. New patterns or paths can be enrolled after review, and owners can publish structured reports to the existing feeds.
+
+Continue Development composes the observed branch and SHA, ownership, current directives, exact-commit checks and recorded dependencies. A matching public checkpoint enables the action even when the developer has no structured report. The prompt links that checkpoint for the next authorized objective and asks the developer to recheck GitHub before writing.
+
+## Physical iPhone receipt
+
+The creator can record test results using the optional `physicalAcceptance` object on a source enrolled for creator authorization. Include the full deployed `commit`, public release `version`, public `device` description, `result` of `passed` or `failed`, UTC `observedAt`, and a public `evidence` link. Set `final` to true only when the creator records full acceptance. Release Center checks the receipt against the verified public deployment and the test observation time. Record automated browser tests under `qualification` instead.
 
 ## Developer run status
 

@@ -78,6 +78,14 @@ test('Public checkpoints and issue ownership require the enrolled source and exa
   assert.match(file.source, new RegExp(old));
   assert.equal(await readCheckpoint(assignment, spec, file, () => assert.fail('immutable file fetched twice')), file);
   await assert.rejects(readCheckpoint(assignment, spec, null, async () => []), /revision unavailable/);
+  const directory = { directory: 'docs/example', pattern: /^SESSION_(\d+)\.md$/ };
+  const docs = ['SESSION_9.md', 'SESSION_11.md', 'script.mjs'].map(name => ({
+    name, type: 'file', path: `${directory.directory}/${name}`,
+  }));
+  const latest = await readCheckpoint(assignment, directory, null, async route => route.includes('/commits?') ? [revision] :
+    route.includes('/SESSION_11.md') ? { type: 'file', path: docs[1].path, sha: base } : docs);
+  assert.match(latest.source, /SESSION_11\.md$/);
+  await assert.rejects(readCheckpoint(assignment, directory, null, async () => [...docs, docs[1]]), /ambiguous/);
   const marker = { comment: 100, commit: old };
   const ownerComment = { id: 100, html_url: url, user: { id: comment.publisher }, author_association: 'OWNER',
     body: `Observed ${old}.`, updated_at: instant };

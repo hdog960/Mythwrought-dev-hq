@@ -4,6 +4,11 @@ export const productionURL = 'https://hdog960.github.io/Mythwrought/';
 const gitHub = 'https://github.com';
 export const git = (repo, tail = '') => `${gitHub}/${repo}${tail}`;
 export const creatorGithubId = 343768368;
+export const creatorReleaseRecords = [
+  { assignmentId: 'unified-v1', pull: 503, comment: 7231766379, kind: 'authorization',
+    commit: 'a491202726f245cb62a7f9688c1d9528b4432a91',
+    digest: 'a964aef4b0797145c38b6150de779e0325574d331d11bc04763c3235f9fc223b' },
+];
 export const qualificationWorkflows = [
   '.github/workflows/ci.yml', '.github/workflows/app-update.yml', '.github/workflows/age-of-beasts-native.yml',
   '.github/workflows/age-of-beasts-desert-visual.yml', '.github/workflows/age-of-beasts-plains-visual.yml',
@@ -77,7 +82,7 @@ export const registry = [
   assignment('beasts', 'manual', 'Mob Developer', 'Age of Beasts', {
     authority: 'Public developer toolkit and creator PR', status: 'Merge embargo', deferred: true,
     branch: 'dev/age-of-beasts-ab0-ab1-20261126', pr: 502, source: git(game, '/pull/502'),
-    checkpointSource: { path: 'docs/age-of-beasts/AB7_SESSION_09.md' },
+    checkpointSource: { directory: 'docs/age-of-beasts', pattern: /^AB\d+(?:_[A-Z0-9]+)*_SESSION_(\d+)\.md$/ },
     reportSources: [ownerReport(game, 502)],
   }),
   assignment('cave', 'manual', 'Cave Developer', 'Living Underworld', { status: 'Deferred per brief' }),
@@ -88,13 +93,13 @@ export const registry = [
   assignment('skills', 'manual', 'Skill Developer', 'Path of Mastery', {
     authority: 'Creator assignment #512', branch: 'dev/path-of-mastery-pm0-pm2-20261127', pr: 515,
     source: git(game, '/issues/512'), ownershipSource: skillOwnership,
-    checkpointSource: checkpointComment(7230843005, '388f4bfd2416311a2cb869ab2acec6a0c670f5ce'),
+    checkpointSource: { directory: 'docs/path-of-mastery', pattern: /^SESSION_(\d+)\.md$/ },
     reportSources: [ownerReport(game, 515)],
   }),
   assignment('combat', 'manual', 'Combat Developer', 'Age of Valor', {
     authority: 'Creator assignment #513', branch: 'dev/age-of-valor-av0-av1-20261127', pr: 514,
     source: git(game, '/issues/513'), ownershipSource: combatOwnership,
-    checkpointSource: checkpointComment(7230827729, 'ed0b0e85d541380d456177d1a0725e02a833c734'),
+    checkpointSource: { directory: 'docs/age-of-valor', pattern: /^AV\d+(?:_AV\d+)?_SESSION_(\d+)\.md$/ },
     reportSources: [ownerReport(game, 514)],
   }),
   assignment('builder', 'automatic', 'Master Builder A–D', 'Standalone building blueprints', {

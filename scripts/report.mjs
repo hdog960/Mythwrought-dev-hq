@@ -82,6 +82,11 @@ export const fields = {
   qualification: optional(list(evidence)), reusableEvidence: optional(list(evidence)),
   decisions: optional(list(decision)), nextObjective: optional(value => requiredText(value, 600)),
   continuation: optional(value => requiredText(value, 2_000)), releaseReadiness: optional(oneOf(READINESS)),
+  physicalAcceptance: optional(value => contract(value, {
+    commit: isSha, version: value => typeof value === 'string' && /^[a-z0-9._-]{1,100}$/.test(value),
+    device: value => requiredText(value, 100), result: oneOf(['passed', 'failed']), evidence: link, observedAt: isISO,
+    final: optional(value => typeof value === 'boolean'),
+  }) && (value.final !== true || value.result === 'passed')),
   ownership: optional(value => isOwnership(value) && contract(value, {
     workspace: oneOf(['personal', 'business']), assignmentState: oneOf(['assigned', 'unassigned']),
     owner: optional(value => requiredText(value, 120)), exclusiveScopes: list(isId),
@@ -103,6 +108,8 @@ export function parseReport(body, assignment, registeredSource, comment) {
   if (payload.roadmap && payload.roadmapRevision && payload.roadmap.revision !== payload.roadmapRevision) return null;
   if ((payload.decisions ?? []).some(item => item.state !== 'requested' &&
       !registeredSource.creatorAuthorizationPublishers?.includes(comment.publisher))) return null;
+  if (payload.physicalAcceptance && (!registeredSource.creatorAuthorizationPublishers?.includes(comment.publisher) ||
+      Date.parse(payload.physicalAcceptance.observedAt) > Date.parse(payload.reportedAt))) return null;
   if (payload.ownership && !registeredSource.creatorOwnershipPublishers?.includes(comment.publisher)) return null;
   const source = sourceLink(comment.url);
   if (!source) return null;

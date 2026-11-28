@@ -7,6 +7,7 @@ import { accountLabels, accountOf, assignmentStatus, automaticSlots, continuatio
 import { blockersPanel, workloadPanel } from './dashboard.mjs';
 import { creatorNotes, creatorNotesPage } from './creator-notes.mjs';
 import { actionGroups, creatorActions } from './command-center.mjs';
+import { releaseOverview } from './releases.mjs';
 
 const routes = [
   ['home', 'Home', 'home'], ['developers', 'Developers', 'users'], ['roadmap', 'Roadmap', 'map'],
@@ -27,7 +28,8 @@ const moreRoutes = [
 const categoryName = { manual: 'Manual', automatic: 'Automatic', codex: 'Codex' };
 const categoryTone = { manual: 'blue', automatic: 'green', codex: 'purple' };
 const sourceNames = { branches: 'Game main reference', pulls: 'Pull requests', issues: 'Issues', workflows: 'Workflows',
-  releases: 'GitHub releases', deployments: 'Pages deployments', production: 'Public release identity', schedule: 'HQ scheduled sync runs',
+  releases: 'GitHub releases', deployments: 'Pages deployments', production: 'Public release identity', publication: 'Public HTML and deployment match',
+  releaseRecords: 'Creator release records', schedule: 'HQ scheduled sync runs',
   directives: 'Creator directives', checkpoints: 'Public checkpoints', ownership: 'Creator ownership issues', reviews: 'PR review requests',
   'workflowLoad:queued': 'Queued workflows',
   'workflowLoad:in_progress': 'Running workflows', 'workflowLoad:waiting': 'Waiting workflows', registeredBranches: 'Registered branch HEADs', checks: 'Exact-commit checks', reports: 'Developer reports' };
@@ -204,11 +206,11 @@ const labelFor = category => categoryName[category] ?? category;
 
 function productionPanel() {
   const production = snapshot.production;
-  const deployment = snapshot.deployments.find(item => item.state === 'success' && item.target);
+  const publication = snapshot.publication;
   return panel('Production', [
     fields([['Public build', production.version ?? 'Unknown'],
       ['Observed', time(production.observedAt)],
-      ['Latest successful public Pages deployment', deployment ? link(short(deployment.head), deployment.source) : 'Unknown']]),
+      ['Public HTML matched to Pages commit', publication ? link(short(publication.head), publication.source) : 'Unavailable']]),
     actions(link('Release center', '#more/releases', 'button')),
   ], { iconName: 'globe' });
 }
@@ -241,16 +243,16 @@ function accountFilter() {
 }
 
 function continuationButton(developer, report, primary = false) {
-  const prompt = continuationFor(developer, report);
+  const prompt = continuationFor(developer, report, snapshot);
   const control = button('Continue Development', () => {
     const current = snapshot.developers.find(item => item.id === developer.id);
     const latest = current && reportFor(current);
-    const latestPrompt = current && continuationFor(current, latest);
+    const latestPrompt = current && continuationFor(current, latest, snapshot);
     if (!latestPrompt) {
       notify('A current continuation checkpoint is unavailable.');
       return;
     }
-    copy(latestPrompt, `Checkpoint ${short(latest.commit)} copied`);
+    copy(latestPrompt, `Checkpoint ${short(current.head)} copied`);
   }, primary ? 'primary' : '');
   control.disabled = !prompt;
   return control;
@@ -308,7 +310,7 @@ function teamPanel(category, developers) {
       return row(developerLink(developer, developer.name), [
         developer.project, el('div', 'team-status', statusBadge(developer)),
         category === 'manual' ? actions(continuationButton(developer, report), openConversation(developer)) : null,
-        category === 'manual' && !continuationFor(developer, report) ? muted('Awaiting a verified checkpoint.') : null,
+        category === 'manual' && !continuationFor(developer, report, snapshot) ? muted('Awaiting a verified checkpoint.') : null,
         category === 'automatic' && developer.scheduleObservedAt
           ? scheduleBadge(developer) : null,
         category === 'codex' && report?.milestone ? el('span', '', `Milestone · ${report.milestone}`) : null,
@@ -392,7 +394,7 @@ function developerIndex(category = 'all') {
       developer.category === 'automatic' && developer.scheduleObservedAt
         ? [muted(`Hourly at :${String(developer.minute).padStart(2, '0')} · ${developer.timezone}`), el('div', '', scheduleBadge(developer))] : null,
       developer.category === 'manual' ? actions(continuationButton(developer, report), openConversation(developer)) : null,
-      developer.category === 'manual' && !continuationFor(developer, report) ? muted('Awaiting a verified checkpoint.') : null);
+      developer.category === 'manual' && !continuationFor(developer, report, snapshot) ? muted('Awaiting a verified checkpoint.') : null);
   });
   return [header(teamNames[category] ?? 'Developers', category === 'automatic' && accountScope === 'all'
     ? `${matches.length} roster entries. ${matches.filter(item => item.scheduleObservedAt).length} schedules verified from the connected automation account.`
@@ -417,6 +419,7 @@ function developerDetail(id) {
     .map(item => item.sessionId)).size;
   const accomplishment = reports.find(item => item.outcome === 'development' && item.completed?.length);
   const continuationControl = continuationButton(developer, report, true);
+  const continuation = continuationFor(developer, report, snapshot);
   const outcome = report ? `${report.outcome} · ${report.releaseReadiness ?? 'Release readiness unknown'}` : 'No verified report';
   const progress = panel('Progress and next work', [
     fields([['Latest authenticated report', report ? link(time(report.reportedAt), report.source) : 'Unavailable'], ['Reported outcome', outcome],
@@ -474,7 +477,7 @@ function developerDetail(id) {
         ['Report checkpoint', report ? link(short(report.commit), report.checkpoint ?? report.source) : 'Unknown']]),
       report && !exact ? muted('Checkpoint is stale or the current HEAD is unverified.') : null,
       actions(continuationControl, openConversation(developer), developer.pr ? link('View exact-commit checks', '#more/evidence/' + developer.id, 'button') : null),
-      exact && report.continuation ? el('details', '', el('summary', '', 'View continuation prompt'), el('p', 'wrap-text', report.continuation)) : null,
+      continuation ? el('details', '', el('summary', '', 'View continuation prompt'), el('p', 'wrap-text', continuation)) : null,
     ], { iconName: 'branch' }), developerPreferences(developer), schedule))];
 }
 
@@ -594,16 +597,36 @@ function activity() {
 }
 
 function releases() {
-  return [header('Release center', 'Published game identity and GitHub deployment evidence.'),
-    el('div', 'main-grid', el('div', 'stack', panel('Current public identity', [
-      fields([['Version', snapshot.production.version], ['Observed', time(snapshot.production.observedAt)]]),
+  const { publication, physical, liveStage, livePull, candidates } = releaseOverview(snapshot);
+  const stale = cached || freshState(snapshot) === 'Stale snapshot';
+  return [header('Release center', 'Candidate, deployment, and device evidence for Mythwrought.'),
+    panel('Production at last observation', [
+      stale ? muted('Showing the last published snapshot. See GitHub and the public game for current state.') : null,
+      fields([['Public version', snapshot.production.version ?? 'Unavailable'], ['Observed', time(snapshot.production.observedAt)],
+        ['Public HTML matched to Pages commit', publication ? link(publication.head, publication.commitSource) : 'Unavailable'],
+        ['Pages deployment', publication ? link(`Deployment ${publication.deploymentId}`, publication.source) : 'Unavailable'],
+        ['Merged PR for public commit', livePull ? link(`#${livePull.number} · ${livePull.title}`, livePull.source) : 'Unavailable'],
+        ['Physical iPhone evidence', physical ? link([`${physical.device} · ${physical.result} · `, time(physical.recordedAt)], physical.evidence)
+          : 'No exact-build record available']]),
       actions(link('Open public game', snapshot.production.source, 'button')),
-    ], { iconName: 'globe' }),
-    panel('GitHub release tags', snapshot.releases.length ? list(snapshot.releases.map(item => link(item.name, item.source))) :
-      muted(snapshot.health.sources.releases?.state === 'ok' ? 'No GitHub releases listed in the collected window.' : 'GitHub release tags unavailable.'))),
-    panel('Recent Pages deployments', rows(snapshot.deployments.map(item => row(
-      link(`Deployment ${item.id}`, item.source), [el('code', '', short(item.head)), ' · ', time(item.updatedAt ?? item.createdAt)],
-      badge(item.state ?? 'Unknown', item.state === 'success' ? 'green' : item.state === 'failure' ? 'red' : ''))))))];
+    ], { iconName: 'globe', end: badge(liveStage, physical?.result === 'passed' ? 'green' : 'gold') }),
+    panel('Registered release candidates', candidates.length ? candidates.map(({ developer, pull, stage, report, gate, approval, request, published }) =>
+      el('details', 'activity-group', el('summary', '', `${developer.project} · ${stage}`),
+        fields([['Candidate', link(pull.head, pull.source)], ['Candidate base', el('code', '', pull.base)],
+          ['Merge commit', pull.mergeCommit ? link(pull.mergeCommit, pull.source) : 'Unavailable'],
+          ['Required checks for candidate', gate ? link(gate.state, gate.source) : 'Unavailable'],
+          ['Creator authorization', approval ? link(approval.detail, approval.source) :
+            request ? link(request.action, request.report.source) : 'Unavailable'],
+          ['Recorded successful deployment', published ? link(`Deployment ${published.id}`, published.lastSuccessSource ?? published.source) : 'Unavailable'],
+          ['Developer checkpoint', developer.publicCheckpoint ? publicCheckpointLink(developer) :
+            report ? link('Open authenticated report', report.source) : 'Unavailable']]),
+        actions(link('Exact-commit evidence', '#more/evidence/' + developer.id, 'button')))) : muted('No registered release candidates in this snapshot.'),
+    { iconName: 'branch' }),
+    el('div', 'dashboard-grid',
+      panel('GitHub release tags', list(snapshot.releases.map(item => link(item.name, item.source)), 'No release tags in the available window.')),
+      panel('Recent Pages deployments', snapshot.deployments.length ? rows(snapshot.deployments.map(item => row(
+        link(`Deployment ${item.id}`, item.source), [el('code', '', short(item.head)), ' · ', time(item.updatedAt ?? item.createdAt)],
+        badge(item.state ?? 'Unknown', item.state === 'success' ? 'green' : item.state === 'failure' ? 'red' : '')))) : muted('Deployment evidence is unavailable.')))];
 }
 
 function evidence(id) {
@@ -615,7 +638,7 @@ function evidence(id) {
   return [header('Evidence vault', developer ? developer.project : 'GitHub check metadata and reported qualification evidence.',
     developer ? actions(link('All evidence', '#more/evidence', 'button')) : null),
     el('div', 'main-grid', panel('Exact-commit GitHub checks', selected.length ? rows(selected.map(item => row(
-      link(item.title, item.source), [`PR #${item.number} · ${short(item.head)} · `, time(item.updatedAt),
+      link(item.title, item.source), [`PR #${item.number} · ${short(item.head)} · ${item.kind === 'status' ? 'Commit status' : 'Check run'} · `, time(item.updatedAt),
         item.preserved ? ' · Preserved result, current requirement unavailable' :
           item.mandatory === null ? ' · Requirement unknown' : item.mandatory ? ' · Required' : ' · Optional'],
       badge(item.conclusion ?? item.status ?? 'Unknown', item.conclusion === 'success' ? 'green' : '')))) : muted('No exact-commit checks available.')),

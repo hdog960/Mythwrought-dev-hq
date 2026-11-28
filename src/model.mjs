@@ -21,7 +21,7 @@ export const isISO = value => typeof value === 'string' && /^\d{4}-\d{2}-\d{2}T\
 export const isSha = value => typeof value === 'string' && SHA.test(value);
 export const isId = value => typeof value === 'string' && ID.test(value);
 export const failedRequiredCheck = check => check.mandatory === true && !check.preserved && check.status === 'completed' &&
-  ['failure', 'timed_out', 'action_required', 'startup_failure', 'cancelled'].includes(check.conclusion);
+  ['failure', 'error', 'timed_out', 'action_required', 'startup_failure', 'cancelled'].includes(check.conclusion);
 
 export function isOwnership(value) {
   return isRecord(value) && WORKSPACES.includes(value.workspace) &&
@@ -78,6 +78,10 @@ export function isSnapshot(data) {
     data.reports.every(item => isId(item.reportId) && isId(item.assignmentId) &&
       isISO(item.reportedAt) && isSha(item.commit) && OUTCOMES.includes(item.outcome) &&
       nullable(item.ownership, isOwnership) &&
+      nullable(item.physicalAcceptance, value => isRecord(value) && isSha(value.commit) &&
+        text(value.version) && text(value.device) && ['passed', 'failed'].includes(value.result) &&
+        nullable(value.final, flag => typeof flag === 'boolean' && (!flag || value.result === 'passed')) &&
+        isISO(value.observedAt) && sourceLink(value.evidence)) &&
       nullable(item.completed, value => Array.isArray(value) && value.every(text)) &&
       nullable(item.remaining, value => Array.isArray(value) && value.every(text)) &&
       nullable(item.roadmap, value => isRecord(value) && isId(value.revision) && records(value.milestones) &&
@@ -97,12 +101,18 @@ export function isSnapshot(data) {
         isISO(bucket.observedAt) && records(bucket.runs) && bucket.runs.length <= bucket.total &&
         bucket.runs.every(item => positive(item.id) && isSha(item.head) && text(item.title) && item.status === status));
     })) &&
-    data.checks.every(item => positive(item.id) && isSha(item.head) && text(item.title)) &&
+    data.checks.every(item => positive(item.id) && isSha(item.head) && text(item.title) &&
+      nullable(item.kind, value => ['check', 'status'].includes(value))) &&
     data.deployments.every(item => positive(item.id) && isSha(item.head)) &&
     data.releases.every(item => positive(item.id) && text(item.name)) &&
     data.directives.every(item => positive(item.number) && text(item.name) && text(item.summary)) &&
     data.dependencies.every(item => isId(item.id) && isId(item.assignment) && isId(item.prerequisite) && text(item.state)) &&
-    nullable(data.production.version, text) && nullable(data.production.observedAt, isISO);
+    nullable(data.releaseRecords, value => records(value) && value.every(item => isId(item.assignmentId) && positive(item.pull) &&
+      item.kind === 'authorization' && isSha(item.commit) && isISO(item.recordedAt) && sourceLink(item.source))) &&
+    nullable(data.publication, value => isRecord(value) && isSha(value.head) && positive(value.deploymentId) &&
+      isSha(value.indexBlob) && value.indexBlob === data.production.indexBlob && nullable(value.deployedAt, isISO) &&
+      sourceLink(value.source) && sourceLink(value.commitSource)) &&
+    nullable(data.production.indexBlob, isSha) && nullable(data.production.version, text) && nullable(data.production.observedAt, isISO);
 }
 
 export function freshState(snapshot, age = Date.now()) {

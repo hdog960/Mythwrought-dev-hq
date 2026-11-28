@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { creatorGithubId, git } from '../config/sources.mjs';
+import { creatorGithubId, game, git } from '../config/sources.mjs';
 import { isISO, isSha } from '../src/model.mjs';
 
 async function creatorIssue(repository, number, detail) {
@@ -33,14 +33,18 @@ export async function readCheckpoint(assignment, spec, prior, detail) {
   const { repository, head, pr } = assignment;
   if (!head) throw new Error('Assignment commit unavailable');
   const route = `/repos/${repository}`;
-  if (spec.path) {
-    if (prior?.kind === 'file' && !prior.preserved && prior.observedHead === head && prior.source.endsWith('/' + spec.path)) return prior;
-    const query = new URLSearchParams({ sha: head, path: spec.path, per_page: '1' });
+  if (spec.path || spec.directory) {
+    const existing = prior?.source.split('/').at(-1);
+    const matchingPrior = spec.path ? prior?.source.endsWith('/' + spec.path) :
+      existing && prior?.source.endsWith(`/${spec.directory}/${existing}`) && spec.pattern.test(existing);
+    if (prior?.kind === 'file' && !prior.preserved && prior.observedHead === head && matchingPrior) return prior;
+    const path = spec.path ?? await latestSessionPath(route, head, spec, detail);
+    const query = new URLSearchParams({ sha: head, path, per_page: '1' });
     const last = (await detail(`${route}/commits?${query}`))?.[0];
     if (!isSha(last?.sha) || !isISO(last.commit?.committer?.date)) throw new Error('Checkpoint file revision unavailable');
-    const file = await detail(`${route}/contents/${spec.path}?ref=${last.sha}`);
-    if (file?.type !== 'file' || file.path !== spec.path || !isSha(file.sha)) throw new Error('Checkpoint file unavailable');
-    return { kind: 'file', source: git(repository, `/blob/${last.sha}/${spec.path}`), commit: last.sha,
+    const file = await detail(`${route}/contents/${path}?ref=${last.sha}`);
+    if (file?.type !== 'file' || file.path !== path || !isSha(file.sha)) throw new Error('Checkpoint file unavailable');
+    return { kind: 'file', source: git(repository, `/blob/${last.sha}/${path}`), commit: last.sha,
       observedHead: head, recordedAt: last.commit.committer.date };
   }
   const comment = await detail(`${route}/issues/comments/${spec.comment}`);
@@ -58,4 +62,27 @@ export async function readCheckpoint(assignment, spec, prior, detail) {
     }
   }
   return { kind: 'comment', source, commit: spec.commit, observedHead: head, recordedAt: comment.updated_at };
+}
+
+async function latestSessionPath(route, head, { directory, pattern }, detail) {
+  const files = await detail(`${route}/contents/${directory}?ref=${head}`);
+  if (!Array.isArray(files) || files.length >= 1000) throw new Error('Checkpoint directory not fully available');
+  const matches = files.flatMap(file => {
+    const index = Number(typeof file.name === 'string' ? file.name.match(pattern)?.[1] : NaN);
+    if (!Number.isSafeInteger(index) || file.type !== 'file' || file.path !== `${directory}/${file.name}`) return [];
+    return [{ path: file.path, index }];
+  }).sort((a, b) => b.index - a.index);
+  if (!matches.length || matches[0].index === matches[1]?.index) throw new Error('Latest checkpoint is ambiguous or unavailable');
+  return matches[0].path;
+}
+
+export async function readCreatorReleaseRecord(spec, detail) {
+  const source = git(game, `/pull/${spec.pull}#issuecomment-${spec.comment}`);
+  const item = await detail(`/repos/${game}/issues/comments/${spec.comment}`);
+  if (item?.id !== spec.comment || item.html_url !== source || item.author_association !== 'OWNER' ||
+      item.user?.id !== creatorGithubId || !isISO(item.created_at) || typeof item.body !== 'string' ||
+      createHash('sha256').update(item.body).digest('hex') !== spec.digest) {
+    throw new Error('Creator release record needs review');
+  }
+  return { assignmentId: spec.assignmentId, pull: spec.pull, kind: spec.kind, commit: spec.commit, source, recordedAt: item.created_at };
 }

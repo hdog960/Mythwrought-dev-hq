@@ -1,8 +1,11 @@
-import { creatorGithubId, dependencies, directives, game, git, hq, productionURL, qualificationWorkflows, registry } from '../config/sources.mjs';
-import { SNAPSHOT_VERSION, WORKFLOW_STATES, failedRequiredCheck, isISO, isSha, isSnapshot, sourceLink } from '../src/model.mjs';
+import { creatorGithubId, creatorReleaseRecords, dependencies, directives, game, git, hq, productionURL, qualificationWorkflows, registry } from '../config/sources.mjs';
+import { SNAPSHOT_VERSION, WORKFLOW_STATES, isISO, isSha, isSnapshot, sourceLink } from '../src/model.mjs';
 import { createGitHub } from './github.mjs';
 import { appendReports, parseReport, publicText, reportKey } from './report.mjs';
-import { collectOwnership, readCheckpoint } from './checkpoints.mjs';
+import { collectOwnership, readCheckpoint, readCreatorReleaseRecord } from './checkpoints.mjs';
+import { qualificationInventory, reconcileQualification, requiredChecks } from './qualification.mjs';
+import { matchProduction, observeProduction } from './publication.mjs';
+export { publicVersion } from './publication.mjs';
 
 const pathFor = (repo, path) => `/repos/${repo}${path}`;
 const gamePath = path => pathFor(game, path);
@@ -36,51 +39,6 @@ function run(row) {
     updatedAt: date(row.updated_at), source: git(game, `/actions/runs/${row.id}`) };
 }
 
-function check(row, candidate, required, mandatoryContextKnown) {
-  if (!pos(row.id) || row.head_sha !== candidate.head || !text(row.name)) return null;
-  const requirement = required.find(rule => rule.context === row.name &&
-    (!pos(rule.app_id) || rule.app_id === row.app?.id));
-  const link = sourceLink(row.html_url);
-  return { id: row.id, number: candidate.number, title: text(row.name), head: candidate.head,
-    status: text(row.status, 40), conclusion: text(row.conclusion, 40),
-    mandatory: requirement ? true : mandatoryContextKnown ? false : null,
-    updatedAt: date(row.completed_at ?? row.started_at), source: link ?? candidate.source };
-}
-
-function gateState(checks, rows, required, complete, candidate) {
-  const observed = checks.filter(item => item.mandatory === true);
-  const failed = observed.find(failedRequiredCheck);
-  if (failed) return { state: 'failed', source: failed.source };
-  const pending = observed.find(item => ['queued', 'in_progress', 'waiting', 'pending', 'requested'].includes(item.status));
-  if (pending) return { state: 'pending', source: pending.source };
-  const passing = required.every(rule => rows.some(row => row.head_sha === candidate.head && row.name === rule.context &&
-    (!pos(rule.app_id) || row.app?.id === rule.app_id) && row.status === 'completed' &&
-    ['success', 'neutral', 'skipped'].includes(row.conclusion)));
-  return { state: complete && passing ? 'clear' : 'unavailable', source: candidate.source };
-}
-
-async function requiredChecks(base, detail) {
-  if (!base) return { checks: [], complete: false };
-  const branch = encodeURIComponent(base);
-  const [legacy, rules] = await Promise.allSettled([
-    detail(gamePath(`/branches/${branch}/protection/required_status_checks`)),
-    detail(gamePath(`/rules/branches/${branch}`)),
-  ]);
-  const protection = legacy.status === 'fulfilled' ? legacy.value : null;
-  const legacyChecks = Array.isArray(protection?.checks) && protection.checks.length ? protection.checks :
-    Array.isArray(protection?.contexts) ? protection.contexts.map(context => ({ context })) : null;
-  const activeRules = rules.status === 'fulfilled' && Array.isArray(rules.value) ? rules.value : null;
-  const ruleChecks = activeRules?.filter(rule => rule?.type === 'required_status_checks')
-    .map(rule => rule.parameters?.required_status_checks);
-  const rulesKnown = Boolean(ruleChecks?.every(Array.isArray));
-  const contexts = (legacyChecks ?? []).concat((ruleChecks ?? []).flatMap(rows => Array.isArray(rows) ?
-    rows.map(row => ({ context: row?.context, app_id: row?.integration_id })) : []));
-  return {
-    checks: contexts.filter(row => text(row?.context)),
-    complete: Boolean(legacyChecks && rulesKnown),
-  };
-}
-
 function release(row) {
   if (!pos(row.id) || row.draft) return null;
   return { id: row.id, name: text(row.name) ?? text(row.tag_name) ?? 'GitHub release',
@@ -99,13 +57,6 @@ function expectedRefresh(now) {
   if (!minute) minute = 10;
   next.setUTCMinutes(next.getUTCMinutes() + minute);
   return next.toISOString();
-}
-
-export function publicVersion(html) {
-  const tag = html.match(/<meta\s+name=["']mythwrought-release["'][^>]{0,450}>/i)?.[0];
-  const value = tag?.match(/\bcontent=["']([a-z0-9._-]{1,100})["']/i)?.[1];
-  if (!value) throw new Error('Public game release identity unavailable');
-  return value;
 }
 
 export async function collect({ previous, state, token, fetcher = fetch, now = new Date() } = {}) {
@@ -185,22 +136,20 @@ export async function collect({ previous, state, token, fetcher = fetch, now = n
     preserve('deployments', previous?.deployments ?? [], async () => {
       const result = await pages(gamePath('/deployments?environment=github-pages'), { maxPages: 1, pageSize: 5 });
       return await Promise.all(result.items.filter(item => pos(item.id) && sha(item.sha)).map(async item => {
-        const statuses = await pages(gamePath(`/deployments/${item.id}/statuses`), { maxPages: 1, pageSize: 1 });
+        const statuses = await pages(gamePath(`/deployments/${item.id}/statuses`), { maxPages: 1, pageSize: 5 });
         const latest = statuses.items[0];
+        const successful = statuses.items.find(status => status.state === 'success' && sourceLink(status.environment_url) === productionURL);
         const target = sourceLink(latest?.environment_url);
         return { id: item.id, head: item.sha, state: text(latest?.state, 40), createdAt: date(item.created_at),
           updatedAt: date(latest?.updated_at ?? latest?.created_at), environment: 'github-pages',
           target: target === productionURL ? target : null,
+          lastSuccessAt: date(successful?.updated_at ?? successful?.created_at),
+          lastSuccessSource: sourceLink(successful?.log_url),
           source: sourceLink(latest?.log_url) ?? git(game, '/deployments') };
       }));
     }),
-    preserve('production', previous?.production ?? { version: null, observedAt: null, source: productionURL }, async () => {
-      const response = await fetcher(productionURL, { cache: 'no-store', redirect: 'error', signal: AbortSignal.timeout(12_000) });
-      if (!response.ok) throw new Error('Public game page unavailable');
-      const html = await response.text();
-      if (html.length > 1_000_000) throw new Error('Public game response is larger than expected');
-      return { version: publicVersion(html), observedAt: attemptedAt, source: productionURL };
-    }),
+    preserve('production', previous?.production ?? { version: null, observedAt: null, source: productionURL },
+      () => observeProduction(fetcher, attemptedAt)),
     Promise.all(WORKFLOW_STATES.map(async status => [
       status,
       await preserve('workflowLoad:' + status, previous?.workflowLoad?.[status] ?? null, async () => {
@@ -249,6 +198,21 @@ export async function collect({ previous, state, token, fetcher = fetch, now = n
       }
       const completed = result.workflow_runs.find(item => item.status === 'completed');
       return { latest: scheduledRun(latest), lastCompleted: completed ? scheduledRun(completed) : null };
+    }),
+  ]);
+
+  const [publication, releaseRecords] = await Promise.all([
+    preserve('publication', null, async () => {
+      if (sources.production.state !== 'ok' || sources.deployments.state !== 'ok') throw new Error('Publication evidence unavailable');
+      const match = await matchProduction(production, deployments, detail);
+      if (!match) mark('publication', 'partial', 'Public HTML did not resolve to one latest successful Pages commit');
+      return match;
+    }),
+    preserve('releaseRecords', [], async () => {
+      const found = await Promise.allSettled(creatorReleaseRecords.map(spec => readCreatorReleaseRecord(spec, detail)));
+      const records = found.flatMap(item => item.status === 'fulfilled' ? [item.value] : []);
+      if (records.length < found.length) mark('releaseRecords', records.length ? 'partial' : 'error', 'Creator release records need review');
+      return records;
     }),
   ]);
 
@@ -339,22 +303,14 @@ export async function collect({ previous, state, token, fetcher = fetch, now = n
       const candidate = candidateFor(developer);
       const base = candidate.baseBranch;
       if (!contexts.has(base)) contexts.set(base, requiredChecks(base, detail));
-      if (!inventories.has(candidate.head)) inventories.set(candidate.head,
-        pages(gamePath(`/commits/${candidate.head}/check-runs?filter=latest`), { unwrap: data => data.check_runs }));
-      try {
-        const [required, found] = await Promise.all([contexts.get(base), inventories.get(candidate.head)]);
-        const checks = found.items.map(item => check(item, candidate, required.checks, required.complete)).filter(Boolean);
-        const complete = required.complete && !found.limited;
-        requiredGates.set(developer.assignmentId, { head: candidate.head,
-          ...gateState(checks, found.items, required.checks, complete, candidate) });
-        return { checks, complete };
-      } catch {
-        const saved = (previous?.checks ?? []).filter(item => item.number === candidate.number && item.head === candidate.head);
-        return { checks: saved.map(item => ({ ...item, mandatory: null, preserved: true })), complete: false, unavailable: true };
-      }
+      if (!inventories.has(candidate.head)) inventories.set(candidate.head, qualificationInventory(candidate.head, pages));
+      const [required, inventory] = await Promise.all([contexts.get(base), inventories.get(candidate.head)]);
+      const result = reconcileQualification(candidate, required, inventory, previous?.checks);
+      requiredGates.set(developer.assignmentId, { head: candidate.head, ...result.gate });
+      return result;
     }));
     if (results.some(item => !item.complete) || candidates.length !== registry.filter(item => item.pr).length) {
-      mark('checks', !results.length || results.every(item => item.unavailable) ? 'error' : 'partial',
+      mark('checks', !results.length || results.every(item => !item.readable) ? 'error' : 'partial',
         'Some PR heads, check results or required check rules could not be verified');
     }
     return results.flatMap(item => item.checks);
@@ -427,7 +383,7 @@ export async function collect({ previous, state, token, fetcher = fetch, now = n
         publicCheckpoint: checkpoints.get(item.assignmentId) ?? null,
         review: reviews.get(item.pr) ?? null, requiredGate: requiredGates.get(item.assignmentId) ?? null };
     }),
-    pulls, issues, workflows, workflowLoad: activeWorkflowLoad, checks, releases, deployments, production, schedule,
+    pulls, issues, workflows, workflowLoad: activeWorkflowLoad, checks, releases, deployments, production, publication, releaseRecords, schedule,
     reports, directives: activeDirectives, dependencies };
   if (!isSnapshot(snapshot)) throw new Error('Collector produced an invalid snapshot');
   return { snapshot, state: { tags: client.tags, reportsSince }, collectionSucceeded, canPublish: Boolean(health.lastSuccess) };
